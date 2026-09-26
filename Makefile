@@ -1,4 +1,4 @@
-.PHONY: build build-acp ui-deps ui-build ui-test ui-typecheck test test-matrix test-race bench-cli-startup bench-cli-startup-real print-test-tag-sets print-full-tags print-lint-tags-no-ui test-opencode-rules check-windows lint lint-windows clean install print-version hooks deb rpm brew brew-formula brew-check site-schema site-schema-check docs docs-check docs-changelog docs-fast site-docs site-docs-check skills-vendor skills-vendor-check
+.PHONY: build build-acp ui-deps ui-build ui-test ui-typecheck test test-matrix test-race test-cache test-perf bench-cli-startup bench-cli-startup-real print-test-tag-sets print-full-tags print-lint-tags-no-ui test-opencode-rules check-windows lint lint-windows clean install print-version hooks deb rpm brew brew-formula brew-check site-schema site-schema-check docs docs-check docs-changelog docs-fast site-docs site-docs-check skills-vendor skills-vendor-check
 
 # ---- Build options (extend when you add optional Go build tags) ----
 #   TAGS   optional extra `go build -tags` values (space-separated).
@@ -271,7 +271,31 @@ print-test-tag-sets:
 # and adds no Go concurrency. CI runs this target on every pull request, and
 # GOFLAGS=-count=3 repeats each test to shake out a race that shows up rarely.
 # Every package is clean under it; a race it reports is fixed, not skipped.
-# Performance: the console's first frame timed in a real pty (pexpect + pyte,
+test-race:
+	go test -race -tags=$(LINT_TAGS_NO_UI_CSV) ./...
+
+# The prompt-cache group: what every request sends the provider, held byte for
+# byte between the steps and the turns of a session - the system message, the
+# history prefix, the rules and where they ride. Its specs are the
+# features/prompt_cache_*.feature files and its tests are named TestPromptCache*,
+# so a new one joins the group by its name. It is part of `make test`; run it on
+# its own when a change touches the system prompt, the rules, the history or the
+# send boundary.
+test-cache:
+	go test -count=1 -run '^TestPromptCache' ./...
+
+# The performance group: the benchmarks (Benchmark*, in the perf_test.go files),
+# which `make test` never runs. They time the work a turn repeats - rules
+# discovery, the look for the rules a tool call brings in, the send boundary -
+# and report what a session of a real project costs the context as metrics
+# (system-tokens, request-tokens, duplicate-rules). BENCH narrows them to a
+# regexp, BENCHTIME sets how long each one runs.
+BENCH ?= .
+BENCHTIME ?= 1s
+test-perf:
+	go test -run '^$$' -bench '$(BENCH)' -benchtime $(BENCHTIME) -benchmem ./...
+
+# Console startup timings: the first frame timed in a real pty (pexpect + pyte,
 # examples/cli/requirements.txt), with an empty, a real and a synthetic skill
 # set and a source that never answers. Not a CI gate: the numbers are read by
 # a person (docs/plans/console-mcp-startup.md keeps the ones a change cited).
@@ -283,9 +307,6 @@ bench-cli-startup: $(BINARY)
 
 bench-cli-startup-real: $(BINARY)
 	python3 examples/cli/bench_tui_real.py --bin main=$(BINARY) --runs $(BENCH_RUNS) --out $(BUILD_DIR)/bench-cli-startup-real.json
-
-test-race:
-	go test -race -tags=$(LINT_TAGS_NO_UI_CSV) ./...
 
 # Type-check the Windows build without a Windows machine.
 #

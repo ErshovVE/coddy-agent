@@ -49,8 +49,9 @@ type Manager struct {
 	sessions map[string]*State
 	mu       sync.RWMutex
 
-	// backgroundMCP defers the configured MCP dial of a new session to a
-	// worker the state owns (SetBackgroundMCPConnect); only the console sets it.
+	// backgroundMCP moves the configured MCP dial of the sessions the manager
+	// opens, new or restored, to a worker the state owns
+	// (SetBackgroundMCPConnect); only the console sets it.
 	backgroundMCP atomic.Bool
 	// mcpConnectTimeout overrides defaultMCPConnectTimeout; tests shorten it.
 	mcpConnectTimeout time.Duration
@@ -102,6 +103,14 @@ type Manager struct {
 	// windows caches the context windows provider listings report
 	// (context_window.go).
 	windows contextWindowState
+
+	// kept holds the process-memory settings of the sessions no surface holds
+	// live right now (settings_state.go): a surface that lets go of a session
+	// - the console does on /new and /resume - must not take its permission
+	// mode and its armed overrides with it, since those last as long as the
+	// process (#362).
+	keptMu sync.Mutex
+	kept   map[string]processSettings
 
 	// testHooks pause the manager at points a test needs to observe; every
 	// field is nil outside tests (see export_test.go).
@@ -171,6 +180,123 @@ func (m *Manager) ReplaceConfig(next *config.Config) {
 	m.reloadConfiguredMCPServers(ctx)
 }
 
+// mcpRefreshTimeout bounds RefreshMCPServer: the dials of the one server in
+// every live session share it, as the sessions of a settings save share
+// mcpReloadTimeout. A variable so a test can shorten it.
+var mcpRefreshTimeout = mcpReloadTimeout
+
+// RefreshMCPServer brings every live session in line with one configured
+// server after its switch, its trust or its declaration changed. A session
+// that should run the server and does not dials it, a session that runs it
+// and should not closes it, a session that runs an older declaration of it
+// starts it again, and every other server keeps its process: a stateful
+// neighbour (a browser-automation server with its pages open) is not
+// restarted by another server's switch. Each session decides for its own
+// workspace, and the sessions are reconciled side by side under one deadline.
+// A session with a turn in flight keeps the tool list that turn handed the
+// model; the server is parked on it, closed when the turn releases its lock
+// and dialed when its next turn starts, as is a server whose dial the
+// deadline cut short.
+func (m *Manager) RefreshMCPServer(ctx context.Context, name string) {
+	ctx, cancel := context.WithTimeout(ctx, mcpRefreshTimeout)
+	defer cancel()
+	m.mu.RLock()
+	states := make([]*State, 0, len(m.sessions))
+	for _, st := range m.sessions {
+		states = append(states, st)
+	}
+	m.mu.RUnlock()
+	var wg sync.WaitGroup
+	for _, st := range states {
+		st.markMCPServerPending(name)
+		wg.Add(1)
+		go func(st *State) {
+			defer wg.Done()
+			m.reconcileParkedWhileIdle(ctx, st)
+		}(st)
+	}
+	wg.Wait()
+}
+
+// reconcileParkedWhileIdle reconciles what is parked on a session whose turn
+// lock is free, and goes on while more is parked by the time it lets go: a
+// second switch that found the lock held by this one parked its server and
+// left, and in a session no turn runs in nobody else would pick it up. A
+// session whose lock a turn holds is left to that turn (drainPendingMCPReload
+// at its release, applyParkedMCPServers at the next one's start).
+func (m *Manager) reconcileParkedWhileIdle(ctx context.Context, st *State) {
+	for ctx.Err() == nil && st.hasPendingMCPServers() {
+		// A background connect still running decides what the session runs:
+		// reconciled before it settles, a switched-on server would be dialed
+		// twice and a switched-off one installed by the dial after all.
+		if err := st.WaitMCPConnect(ctx); err != nil {
+			return
+		}
+		unlock, err := m.acquirePromptTurnLock(st.GetID(), st)
+		if err != nil {
+			return
+		}
+		func() {
+			defer unlock()
+			m.applyPendingMCPServers(ctx, st, true)
+		}()
+	}
+}
+
+// MCPServers lists the configured servers of a workspace for the /mcp
+// controls of the console and the chat, through the same managed declarations
+// and trust gate as the HTTP settings surface.
+func (m *Manager) MCPServers(ctx context.Context, cwd string) ([]mcp.ServerStatus, error) {
+	return mcp.ListStatus(ctx, m.activeCfg(), cwd, m.log)
+}
+
+// SetMCPEnabled flips a server's switch, or one tool's when tool is set, and
+// brings live sessions in line. A tool switch reconnects nothing: every turn
+// rebuilds its tool filter from the switches (MCPFilterFactory).
+func (m *Manager) SetMCPEnabled(ctx context.Context, cwd, name, tool string, enabled bool) error {
+	if err := mcp.SetStatus(m.activeCfg(), cwd, name, tool, enabled); err != nil {
+		return err
+	}
+	if tool == "" {
+		m.RefreshMCPServer(ctx, name)
+	}
+	return nil
+}
+
+// SetMCPTrust records or withdraws the workspace approval of a project
+// server and brings live sessions in line: an approved server connects, one
+// whose approval was withdrawn closes. fingerprint is the digest of the
+// declaration the operator was shown; the approval is refused with
+// mcp.ErrDeclarationChanged when the checkout rewrote the entry since.
+func (m *Manager) SetMCPTrust(ctx context.Context, cwd, name, fingerprint string, trusted bool) error {
+	gate := mcp.NewTrustGate(m.activeCfg())
+	if !trusted {
+		if _, err := gate.Revoke(cwd, name); err != nil {
+			return err
+		}
+	} else {
+		servers, err := mcp.ListManagedServers(m.activeCfg(), cwd)
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, srv := range servers {
+			if srv.Config.Name == name {
+				if err := gate.ApproveShown(cwd, srv, fingerprint); err != nil {
+					return err
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("MCP server %q not found", name)
+		}
+	}
+	m.RefreshMCPServer(ctx, name)
+	return nil
+}
+
 // storeConfig replaces the process configuration and the loader used by new
 // sessions. It returns the previous configuration so callers can decide
 // whether active MCP clients need reconnecting.
@@ -214,8 +340,10 @@ func (m *Manager) ReloadConfigForSession(ctx context.Context, st *State) ([]stri
 	if st != nil {
 		// A background connect still running for this session is superseded:
 		// the servers it would install belong to the configuration being
-		// replaced.
-		st.cancelBackgroundMCPConnect()
+		// replaced. A session whose servers wait for its first turn gets them
+		// here, from the configuration being installed.
+		m.supersedeBackgroundMCP(st)
+		st.takeDeferredConfiguredMCP()
 		var connectWarnings []string
 		nextGlobal, connectWarnings = m.dialConfiguredFor(ctx, next, st.GetCWD())
 		warnings = append(warnings, connectWarnings...)
@@ -225,9 +353,7 @@ func (m *Manager) ReloadConfigForSession(ctx context.Context, st *State) ([]stri
 	if st != nil {
 		st.ReplaceSkills(loadedSkills)
 		st.ReplaceRulesCatalog(DiscoverRules(next, st.GetCWD()))
-		st.MCPFilterFactory = func() func(server, tool string) bool {
-			return config.BuildMCPToolFilter(EffectiveMCPServers(m.activeCfg(), st.GetCWD(), m.log))
-		}
+		m.installMCPFilter(st)
 		if ctx.Err() == nil {
 			st.replaceConfiguredMCPClients(nextGlobal)
 		} else {
@@ -425,7 +551,7 @@ func (m *Manager) buildFreshState(ctx context.Context, id, cwd, sessionDir strin
 
 	state.SetPersistHook(m.makePersist(state))
 
-	m.connectConfiguredMCPServersOrDefer(ctx, state)
+	m.connectNewSessionMCPServers(ctx, state)
 	m.connectSessionMCPServers(ctx, state, acpMCPServersToConfig(mcpServers))
 
 	return state, nil
@@ -515,6 +641,10 @@ func (m *Manager) loadSessionFromDisk(ctx context.Context, params acp.SessionLoa
 		// no turn ever runs on it.
 		st.SetSchedulerJobWithoutPersist(snap.Meta.SchedulerJobID)
 		jobSession = true
+	} else if kept, ok := m.keptProcessSettings(params.SessionID); ok {
+		// A surface let go of this session earlier in this process: its
+		// permission mode and its armed overrides come back with it.
+		st.restoreProcessSettings(kept)
 	}
 	st.SetTitlePinnedWithoutPersist(snap.Meta.TitlePinned)
 	st.SetTagsWithoutPersist(snap.Meta.Tags)
@@ -541,7 +671,14 @@ func (m *Manager) loadSessionFromDisk(ctx context.Context, params acp.SessionLoa
 
 		m.runSessionStartHooks(ctx, st, hookSourceResume)
 
-		m.connectConfiguredMCPServersOrDefer(ctx, st)
+		// A stored conversation is loaded to be read as often as to be
+		// continued - its transcript, its activity, its stats - so its
+		// configured MCP servers are not started here but before its first
+		// turn (beginTurn). Starting them on every load left one process per
+		// session anybody had looked at, for the life of the server. The
+		// console, which only loads a session to continue it, starts them in
+		// the background instead (deferConfiguredMCPServers).
+		m.deferConfiguredMCPServers(st)
 		m.connectSessionMCPServers(ctx, st, acpMCPServersToConfig(params.MCPServers))
 	}
 
@@ -638,14 +775,74 @@ func (m *Manager) EnsureHTTPSession(ctx context.Context, sessionID string, defau
 	return st, nil
 }
 
-// ForgetLiveSession disconnects MCP clients for the id and removes it from the active map (does not touch disk).
+// ForgetLiveSession disconnects MCP clients for the id and removes it from the
+// active map (does not touch disk). What the session keeps in process memory
+// only is set aside for the next load of the same id, unless the session is
+// being deleted.
 func (m *Manager) ForgetLiveSession(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if st, ok := m.sessions[sessionID]; ok {
+	st := m.sessions[sessionID]
+	m.keepProcessSettings(sessionID, st)
+	if st != nil {
 		st.CloseAll()
 		delete(m.sessions, sessionID)
 	}
+}
+
+// keepProcessSettings sets aside the process-memory settings of an ordinary
+// session a surface lets go of (st nil: not live, what was set aside stays). A
+// child's settings were fixed at spawn and a job session runs nothing, so
+// neither is kept; nor is anything for a session being deleted, whose id never
+// comes back.
+func (m *Manager) keepProcessSettings(sessionID string, st *State) {
+	deleting := m.isDeleting(sessionID)
+	if st == nil && !deleting {
+		return
+	}
+	var p processSettings
+	if st != nil && !deleting && st.Subagent() == nil && !st.IsSchedulerJob() {
+		p = st.readProcessSettings()
+	}
+	m.keptMu.Lock()
+	defer m.keptMu.Unlock()
+	if p.empty() {
+		delete(m.kept, sessionID)
+		return
+	}
+	if m.kept == nil {
+		m.kept = make(map[string]processSettings)
+	}
+	m.kept[sessionID] = p
+}
+
+// keptProcessSettings is what keepProcessSettings set aside for sessionID.
+func (m *Manager) keptProcessSettings(sessionID string) (processSettings, bool) {
+	m.keptMu.Lock()
+	defer m.keptMu.Unlock()
+	p, ok := m.kept[sessionID]
+	return p, ok
+}
+
+// dropKeptProcessSettings forgets what was set aside for sessionID: the live
+// state holds it again, or the session is gone.
+func (m *Manager) dropKeptProcessSettings(sessionID string) {
+	m.keptMu.Lock()
+	defer m.keptMu.Unlock()
+	delete(m.kept, sessionID)
+}
+
+// keepIfLetGo sets aside the process-memory settings of st when a surface let
+// go of it while a change to it was being written: the change would otherwise
+// live on a state no load returns to. A state loaded again meanwhile holds
+// what was set aside before the change; that interleaving is left as it is.
+func (m *Manager) keepIfLetGo(sessionID string, st *State) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, live := m.sessions[sessionID]; live {
+		return
+	}
+	m.keepProcessSettings(sessionID, st)
 }
 
 // FileStore returns the persistence backend or nil when the manager runs without disk (tests only).
@@ -876,23 +1073,18 @@ func (m *Manager) beginTurn(ctx context.Context, sessionID string, state *State,
 			}
 		})
 	}
+	// The MCP servers this turn needs are brought in now, under the turn lock
+	// and before the model is handed its tools. Work that is not a prompt (a
+	// compaction) calls no tool and starts nothing.
+	if !adm.noQueue {
+		m.bringInTurnMCPServers(ctx, turnCtx, state)
+	}
 	if hook := m.testHooks.beforeTurnAdmissionRecheck; hook != nil {
 		hook(sessionID)
 	}
 	if err := m.admissible(sessionID, state); err != nil {
 		finish()
 		return nil, nil, err
-	}
-	// A prompt needs the session's tool list, and that list is fixed when the
-	// turn starts: a session whose configured MCP servers are still connecting
-	// in the background (the console defers them past its first frame) waits
-	// here, bounded by the per-server timeout that started with the session,
-	// and Stop ends the wait like any other step of the turn.
-	if !adm.noQueue {
-		if err := state.WaitMCPConnect(turnCtx); err != nil {
-			finish()
-			return nil, nil, err
-		}
 	}
 	// The window this turn's compaction trigger and usage_update measure
 	// against: a model without max_context_tokens reads its provider's model
@@ -1129,25 +1321,50 @@ func (m *Manager) HandleSessionPromptWithSender(ctx context.Context, params acp.
 	// where a message is accepted by a turn that is already over.
 	//
 	// Only a turn that ended with an answer continues. A cancelled turn is a
-	// Stop, and a Stop drops what was waiting rather than answering it; a turn
+	// Stop, and a Stop drops unread steer messages but retains after_turn; a turn
 	// that stopped for any other reason (its turn cap, a refusal, a hook) says
 	// why (the stop notice below, or its error), and running it again would
 	// bury that. The run count is
 	// bounded for the same reason the ReAct loop is: each continuation is a
 	// fresh Agent.Run with its own budget, so without a cap one admission
-	// could hold the session's turn lock indefinitely.
+	// could hold the session's turn lock indefinitely. The cap covers a full
+	// queue of after_turn messages.
 	for runs := 0; stopReason == string(acp.StopReasonEndTurn) && turnCtx.Err() == nil; runs++ {
 		if runs >= maxQueuedFollowUpRuns {
 			left := state.CloseMessageQueue()
-			m.log.Warn("message queue follow-ups capped; the rest is dropped",
-				"session_id", params.SessionID, "runs", runs, "dropped", len(left))
+			if len(left) > 0 || len(state.QueuedMessages()) > 0 {
+				m.log.Warn("message queue follow-ups capped; unread steer messages dropped",
+					"session_id", params.SessionID, "runs", runs, "dropped", len(left))
+			}
 			break
 		}
 		queued, more := state.TakeQueuedMessagesOrClose()
 		if !more {
 			break
 		}
-		stopReason, err = m.runner(turnCtx, state, state.ResolveQueuedMentions(QueuedPromptBlocks(queued)), sender)
+		var images []llm.ImagePart
+		for _, q := range queued {
+			for _, p := range q.ImageParts {
+				images = append(images, llm.ImagePart{DataURL: p.DataURL, Name: p.Name})
+			}
+		}
+		if len(images) > 0 {
+			if saveErr := SavePartsToAssets(images, sessionDir); saveErr != nil {
+				m.log.Warn("save queued files to assets", "error", saveErr)
+			}
+			state.SetPendingImageParts(images)
+		}
+		// No client typed this prompt into its view of the turn, so the run
+		// announces it (PromptEcho) before it answers it.
+		rev := state.MessagesRev()
+		stopReason, err = m.runner(withPromptEcho(turnCtx, params.SessionID), state, state.ResolveQueuedMentions(QueuedPromptBlocks(queued)), sender)
+		if turnCtx.Err() != nil && state.MessagesRev() == rev {
+			// Stopped before the prompt entered the conversation: nothing read
+			// it. An after_turn message waits again, as Stop promises, and the
+			// images it was to carry are not left for the next prompt.
+			state.TakePendingImageParts()
+			state.ReturnQueuedMessages(keepAfterTurn(queued))
+		}
 		if err != nil {
 			state.TakeTurnStopNotice()
 			if !errors.Is(err, context.Canceled) {
@@ -1174,9 +1391,9 @@ func (m *Manager) HandleSessionPromptWithSender(ctx context.Context, params acp.
 // Each continuation is a full Agent.Run with its own agent.max_turns budget, so
 // an operator (or a script) writing one follow-up per boundary could otherwise
 // hold the session's turn lock for as long as they keep typing. Past the cap
-// the queue is closed and what is left is dropped with a warning, exactly as a
-// Stop drops it: the alternative is a session no other surface can ever enter.
-const maxQueuedFollowUpRuns = 8
+// the queue is closed and unread steer messages are dropped with a warning;
+// after_turn messages remain waiting for the next ordinary turn.
+const maxQueuedFollowUpRuns = MaxQueuedMessages
 
 func (m *Manager) HandleSessionSetMode(ctx context.Context, params acp.SessionSetModeParams) error {
 	mode := params.ModeID
@@ -1255,6 +1472,10 @@ func (m *Manager) registerSession(id string, st *State) (winner *State, register
 		return existing, false
 	}
 	m.sessions[id] = st
+	// What a surface let go of is the live state's again (loadSessionFromDisk
+	// restored it). Taken under the lock ForgetLiveSession sets it aside under,
+	// so a let-go right after this registration keeps what it reads.
+	m.dropKeptProcessSettings(id)
 	return st, true
 }
 
@@ -1353,9 +1574,107 @@ func EffectiveMCPServers(cfg *config.Config, cwd string, log *slog.Logger) []con
 // creation into arbitrary process execution: entries the checkout brought
 // with it stay cold until the operator approves that exact declaration.
 func (m *Manager) connectConfiguredMCPServers(ctx context.Context, state *State) {
-	m.installMCPFilterFactory(state)
-	for _, client := range m.dialConfiguredMCPServers(ctx, state.GetCWD()) {
+	m.startConfiguredMCPServers(ctx, state)
+	m.installMCPFilter(state)
+}
+
+// deferConfiguredMCPServers prepares a session restored from disk: the per-turn
+// tool filter is installed and the configured servers are left for
+// connectDeferredMCPServers to start before the session's first turn. A
+// manager that connects in the background (the console, which restores a
+// session only to continue it) starts them now instead, the way it does for
+// a new session, and the first turn waits for that dial.
+func (m *Manager) deferConfiguredMCPServers(state *State) {
+	m.installMCPFilter(state)
+	if m.backgroundMCP.Load() {
+		m.startBackgroundMCPConnect(state)
+		return
+	}
+	state.deferConfiguredMCP()
+}
+
+// mcpStartTimeout bounds the dials that bring a session its configured MCP
+// servers: a new session's, a restored session's before its first turn, and
+// those a switch parked on it before its next turn. The processes outlive it.
+// A variable so a test can shorten it.
+var mcpStartTimeout = mcpReloadTimeout
+
+// startConfiguredMCPServers dials every enabled configured server the trust
+// gate admits for the session's workspace and attaches the clients, under one
+// deadline. A server that never answers its handshake no longer holds the
+// session's creation forever: what the deadline cut short is parked, so the
+// session's next turn tries it again instead of running without it for good.
+func (m *Manager) startConfiguredMCPServers(ctx context.Context, state *State) {
+	dialCtx, cancel := context.WithTimeout(ctx, mcpStartTimeout)
+	defer cancel()
+	for _, client := range m.dialConfiguredMCPServers(dialCtx, state.GetCWD()) {
 		state.addConfiguredMCPClient(client)
+	}
+	if dialCtx.Err() == nil {
+		return
+	}
+	cfg := m.activeCfg()
+	gate := mcp.NewTrustGate(cfg)
+	cwd := state.GetCWD()
+	for _, srv := range mcp.ListManagedServersTolerant(cfg, cwd, m.log) {
+		if srv.Config.Disabled || state.hasConfiguredMCPClient(srv.Config.Name) ||
+			gate.Evaluate(cwd, srv) != mcp.TrustStateAllowed {
+			continue
+		}
+		state.markMCPServerPending(srv.Config.Name)
+		m.log.Warn("MCP server did not start before its deadline; the session's next turn tries it again",
+			"server", srv.Config.Name, "session", state.GetID())
+	}
+}
+
+// connectDeferredMCPServers starts the configured MCP servers of a session
+// restored from disk, once, before its first turn and under the turn lock, so
+// the dial is a fresh trust evaluation of the configuration of that moment.
+func (m *Manager) connectDeferredMCPServers(ctx context.Context, state *State) {
+	if !state.takeDeferredConfiguredMCP() {
+		return
+	}
+	m.startConfiguredMCPServers(ctx, state)
+}
+
+// bringInTurnMCPServers brings in the MCP servers a turn is about to be
+// handed, under its turn lock. First it waits for a background connect still
+// running: the console connects a session's configured servers after its
+// first frame, and the tool list is fixed when the turn starts, so a prompt
+// sent before the servers answered waits for them, bounded by the per-server
+// timeout. The wait runs on turnCtx, so Stop ends it like any other step of
+// the turn, and the turn then goes on to the runner with its cancelled
+// context, which reports it as stopped. Then it dials the servers a switch
+// parked on the session and, for a session restored from disk, all of its
+// configured servers, on the admission's ctx.
+func (m *Manager) bringInTurnMCPServers(ctx, turnCtx context.Context, state *State) {
+	if state.WaitMCPConnect(turnCtx) != nil {
+		return
+	}
+	m.applyParkedMCPServers(ctx, state)
+	m.connectDeferredMCPServers(ctx, state)
+}
+
+// applyParkedMCPServers dials the servers a switch parked on the session - a
+// session that was running a turn, or a dial the deadline cut short - before
+// the turn it runs under, so the turn is handed the tools of the switches as
+// they are now.
+func (m *Manager) applyParkedMCPServers(ctx context.Context, state *State) {
+	if !state.hasPendingMCPServers() {
+		return
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, mcpStartTimeout)
+	defer cancel()
+	m.applyPendingMCPServers(dialCtx, state, true)
+}
+
+// installMCPFilter installs the per-turn tool filter factory, so disable
+// toggles reach the session. The factory reads the cwd lazily: a later
+// workspace switch must not leave the filter evaluating the old workspace's
+// merged list.
+func (m *Manager) installMCPFilter(state *State) {
+	state.MCPFilterFactory = func() func(server, tool string) bool {
+		return config.BuildMCPToolFilter(EffectiveMCPServers(m.activeCfg(), state.GetCWD(), m.log))
 	}
 }
 
@@ -1422,10 +1741,25 @@ func (m *Manager) reloadConfiguredMCPServersExcept(ctx context.Context, skip *St
 // save, so this is what a server hanging in the session dialed first costs the
 // rest. It reports whether the swap happened; a discarded dial leaves the
 // reload parked for a later turn to retry.
+//
+// The servers parked on the session are taken before the dial, not after it:
+// the reload covers what was parked by the moment it read the configuration,
+// and a switch that lands while it dials parks its server anew, for the drain
+// that follows the reload to reconcile. Taken after the dial, that newer
+// switch would be dropped with the rest and the reload's older view of the
+// server - started, while the operator had just switched it off or withdrawn
+// its approval - would stand. A discarded dial leaves the full reload parked,
+// which covers the servers taken here.
 func (m *Manager) applyConfiguredMCPReload(ctx context.Context, st *State) bool {
-	// The reload supersedes a background connect still running for the
-	// session: what it would install belongs to the previous configuration.
-	st.cancelBackgroundMCPConnect()
+	st.takeMCPServersPending()
+	if st.configuredMCPDeferred() {
+		// Nothing was started for this session yet: its first turn dials the
+		// configuration of that moment, so a reload has nothing to swap.
+		return true
+	}
+	// A background connect still running for the session is superseded:
+	// what it would install belongs to the configuration being replaced.
+	m.supersedeBackgroundMCP(st)
 	clients := m.dialConfiguredMCPServers(ctx, st.GetCWD())
 	if err := ctx.Err(); err != nil {
 		for _, client := range clients {
@@ -1454,12 +1788,102 @@ func (m *Manager) drainPendingMCPReload(sessionID string, st *State) {
 		return
 	}
 	defer unlock()
-	if !st.takeMCPReloadPending() {
+	if st.takeMCPReloadPending() {
+		// A full reload re-dials every configured server, the servers parked
+		// so far included.
+		ctx, cancel := context.WithTimeout(context.Background(), mcpReloadTimeout)
+		defer cancel()
+		if !m.applyConfiguredMCPReload(ctx, st) {
+			return
+		}
+	}
+	// Single servers parked during the turn, or during the reload above:
+	// what should no longer run is closed now, and a dial waits for the
+	// session's next turn (applyParkedMCPServers), so a server that does not
+	// answer cannot hold the end of this one.
+	m.applyPendingMCPServers(context.Background(), st, false)
+}
+
+// applyPendingMCPServers reconciles the servers parked on the session, under
+// the turn lock the caller holds, side by side so a server that never answers
+// does not starve the others. With dial false it only closes what should no
+// longer run and keeps the rest parked for the session's next turn.
+func (m *Manager) applyPendingMCPServers(ctx context.Context, st *State, dial bool) {
+	if st.backgroundMCPRunning() {
+		// The configured servers are still connecting in the background, so
+		// what the session runs is not known yet: the parked servers stay
+		// parked for whoever waits for that dial - the next turn's start, or
+		// RefreshMCPServer.
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), mcpReloadTimeout)
-	defer cancel()
-	_ = m.applyConfiguredMCPReload(ctx, st)
+	names := st.takeMCPServersPending()
+	if len(names) == 0 || st.configuredMCPDeferred() {
+		// A session whose servers wait for its first turn starts none of them
+		// for a switch either: that turn dials the configuration of its moment.
+		return
+	}
+	cfg := m.activeCfg()
+	gate := mcp.NewTrustGate(cfg)
+	managed := mcp.ListManagedServersTolerant(cfg, st.GetCWD(), m.log)
+	var wg sync.WaitGroup
+	for _, name := range names {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			m.reconcileConfiguredMCPServer(ctx, st, gate, managed, name, dial)
+		}(name)
+	}
+	wg.Wait()
+}
+
+// reconcileConfiguredMCPServer brings one configured server of a session in
+// line: it runs exactly when it is enabled and the trust gate admits it for
+// the session's workspace, from the declaration on disk. A client started
+// from an older declaration (its command was edited since) is closed and the
+// server started again. The dial goes through TrustGate.Connect like every
+// other configured dial; with dial false a server that has to be started is
+// parked for the next turn instead.
+func (m *Manager) reconcileConfiguredMCPServer(ctx context.Context, st *State, gate *mcp.TrustGate, managed []mcp.ManagedServer, name string, dial bool) {
+	cwd := st.GetCWD()
+	var want *mcp.ManagedServer
+	for i := range managed {
+		if managed[i].Config.Name == name {
+			want = &managed[i]
+			break
+		}
+	}
+	wanted := want != nil && !want.Config.Disabled && gate.Evaluate(cwd, *want) == mcp.TrustStateAllowed
+	declared, running := st.configuredMCPClientDeclared(name)
+	stale := running && wanted && declared != "" && declared != mcp.Fingerprint(want.Config)
+	if running && (!wanted || stale) {
+		st.closeConfiguredMCPClient(name)
+		m.log.Info("closed MCP server", "name", name, "session", st.GetID(), "declaration_changed", stale)
+		running = false
+	}
+	if !wanted || running {
+		return
+	}
+	if !dial {
+		st.markMCPServerPending(name)
+		return
+	}
+	client, err := m.dialOne(ctx, m.configuredTarget(gate, *want, cwd))
+	if ctx.Err() != nil {
+		if client != nil {
+			_ = client.Close()
+		}
+		st.markMCPServerPending(name)
+		m.log.Warn("MCP server did not start before its deadline; the session's next turn tries it again",
+			"server", name, "session", st.GetID())
+		return
+	}
+	if err != nil {
+		m.log.Warn("failed to connect MCP server", "server", name, "session", st.GetID(), "error", err)
+		return
+	}
+	st.addConfiguredMCPClient(client)
+	m.log.Info("connected MCP server", "name", name, "session", st.GetID(),
+		"transport", mcp.EffectiveTransport(want.Config), "tools", len(client.Tools()))
 }
 
 // acquireTurnLockWithReloadDrain wraps the raw turn lock so its release also

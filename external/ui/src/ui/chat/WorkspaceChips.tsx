@@ -21,6 +21,7 @@ import {
   subscribeShellStack,
 } from "../shellBreakpoint";
 import { useT } from "../i18n/I18nProvider";
+import { useEscapeCloses } from "../components/useEscapeCloses";
 
 type Props = {
   context: WorkspaceContext | null;
@@ -51,6 +52,11 @@ export function WorkspaceChips(props: Props) {
     serverSnapshotShellStack,
   );
   const menuUseSheet = isMobileShell;
+  // Escape closes the folder or branch menu that is open.
+  useEscapeCloses(menuOpen !== null, () => {
+    setMenuOpen(null);
+    setMenuAnchorRect(null);
+  });
 
   const ctx = props.context;
   if (!ctx) {

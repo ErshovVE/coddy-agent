@@ -7,6 +7,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -168,34 +169,56 @@ func TestTurnWaitsForBackgroundConnect(t *testing.T) {
 }
 
 // TestCancelDuringWaitEndsTurn: Stop while the turn waits for the dial ends
-// the turn without running it.
+// the wait at once. The runner is entered with the cancelled context, as after
+// any other stopped step of a turn, and the turn is over before the server
+// has answered.
 func TestCancelDuringWaitEndsTurn(t *testing.T) {
-	entered := make(chan struct{}, 1)
-	runner := func(context.Context, *State, []acp.ContentBlock, acp.UpdateSender) (string, error) {
-		entered <- struct{}{}
+	entered := make(chan error, 1)
+	runner := func(ctx context.Context, _ *State, _ []acp.ContentBlock, _ acp.UpdateSender) (string, error) {
+		entered <- ctx.Err()
+		if ctx.Err() != nil {
+			return string(acp.StopReasonCancelled), nil
+		}
 		return string(acp.StopReasonEndTurn), nil
 	}
 	f := newBackgroundFixture(t, runner, nil)
-	turn := make(chan error, 1)
+	turn := make(chan *acp.SessionPromptResult, 1)
 	go func() {
-		_, err := f.mgr.HandleSessionPrompt(context.Background(), acp.SessionPromptParams{
+		res, err := f.mgr.HandleSessionPrompt(context.Background(), acp.SessionPromptParams{
 			SessionID: f.st.GetID(), Prompt: []acp.ContentBlock{{Type: "text", Text: "hi"}},
 		})
-		turn <- err
+		if err != nil {
+			t.Error(err)
+		}
+		turn <- res
 	}()
 	if !waitUntil(t, 5*time.Second, func() bool { return f.mgr.SessionTurnActiveInProcess(f.st.GetID()) }) {
 		t.Fatal("the turn never became active")
 	}
+	select {
+	case <-entered:
+		t.Fatal("the runner started before the dial settled or the turn was stopped")
+	case <-time.After(200 * time.Millisecond):
+	}
 	f.mgr.HandleSessionCancel(acp.SessionCancelParams{SessionID: f.st.GetID()})
 	select {
-	case <-turn:
+	case err := <-entered:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the runner was entered with context error %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stopped turn never reached its runner")
+	}
+	select {
+	case res := <-turn:
+		if res == nil || res.StopReason != acp.StopReasonCancelled {
+			t.Fatalf("result = %+v, want a cancelled turn", res)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the cancelled turn did not end")
 	}
-	select {
-	case <-entered:
-		t.Fatal("the runner ran although the turn was cancelled while waiting")
-	default:
+	if snap, _ := f.st.MCPConnectSnapshot(); snap.Done {
+		t.Fatal("the dial settled although the server was never released")
 	}
 	f.releaseServer()
 }

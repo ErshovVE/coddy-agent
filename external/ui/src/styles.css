@@ -4264,6 +4264,45 @@ a.rail-brand {
   font-size: 15px;
 }
 
+.composer-queue-mode,
+.composer-queue-choice button {
+  flex: 0 0 auto;
+  border: 1px solid var(--coddy-glass-panel-border);
+  border-radius: 8px;
+  background: var(--coddy-glass-panel-bg);
+  color: var(--text);
+  padding: 3px 8px;
+  cursor: pointer;
+  font: inherit;
+}
+
+/* The paperclip and the count of images a queued message carries; the images
+   themselves stay on the server until the message is read or taken back. */
+.composer-queue-files {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.composer-queue-choice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--coddy-glass-panel-border);
+  border-radius: 12px;
+  background: var(--coddy-glass-panel-bg);
+  color: var(--text);
+  font-size: 12px;
+}
+
 /* The primary control keeps its circle and swaps only its meaning: a draft
    written during a turn is queued, an empty one still stops the turn. */
 .composer-run-icon--queue {
@@ -7488,9 +7527,9 @@ html:not([data-theme="light"]) .context-usage-note--error {
 }
 
 /* Settings drawer (#/settings) - same glass shell as History / Scheduler drawers.
-   The lead pane is the status band: it renders only while a load or save
-   result needs reporting, so nothing stands between the head and the tabs
-   otherwise. */
+   The lead pane is the status band: it renders only while a failed read or a
+   failed save needs saying, so nothing stands between the head and the tabs
+   otherwise. A save that went through says so on the Save button alone. */
 .settings.drawer .settings-lead-pane {
   flex-shrink: 0;
   padding: 8px 14px 10px;
@@ -7514,19 +7553,11 @@ html:not([data-theme="light"]) .context-usage-note--error {
   box-sizing: border-box;
 }
 
-.settings.drawer .settings-scroll-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 120px;
-}
-
 .settings.drawer .settings-footer-actions {
   flex-shrink: 0;
 }
 
-.settings-lead-pane .settings-error,
-.settings-lead-pane .settings-ok {
+.settings-lead-pane .settings-error {
   margin-top: 0;
 }
 
@@ -7579,6 +7610,12 @@ html:not([data-theme="light"]) .context-usage-note--error {
 .settings-btn-primary {
   border-color: rgba(147, 51, 234, 0.55);
   background: rgba(147, 51, 234, 0.22);
+  /* Slower than the other buttons, so the green of a save eases back. */
+  transition:
+    background 360ms ease,
+    border-color 360ms ease,
+    box-shadow 360ms ease,
+    transform 80ms ease;
 }
 
 .settings-btn-primary:hover:not(:disabled) {
@@ -7645,12 +7682,6 @@ html:not([data-theme="light"]) .context-usage-note--error {
 
 .settings-error {
   color: #fecaca;
-  margin: 4px 0 0;
-  font-size: 0.88rem;
-}
-
-.settings-ok {
-  color: #bbf7d0;
   margin: 4px 0 0;
   font-size: 0.88rem;
 }
@@ -8070,36 +8101,122 @@ html:not([data-theme="light"]) .context-usage-note--error {
   }
 }
 
-/* Save feedback: the save button pops with a green success flash. */
-.settings-btn-primary.is-saved {
-  animation: settings-save-pop 1s ease;
+/* Save feedback: a save that went through turns the Save button green for
+   SAVE_SUCCESS_MS (Settings.tsx) - no line of text, the colour is the message -
+   and the button eases back to its own colour after. The green is a state, not
+   a frame of the pop, so it holds under reduced motion too. A failed save says
+   why in the lead pane instead. */
+.settings-btn-primary.is-saved,
+.settings-btn-primary.is-saved:hover:not(:disabled) {
+  border-color: rgba(34, 197, 94, 0.85);
+  background: rgba(34, 197, 94, 0.3);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.24);
+  animation: settings-save-pop 0.45s ease;
 }
 
 @keyframes settings-save-pop {
   0% {
     transform: scale(1);
   }
-  25% {
-    transform: scale(1.16);
-    border-color: rgba(34, 197, 94, 0.85);
-    background: rgba(34, 197, 94, 0.32);
-    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.3);
-  }
-  60% {
-    transform: scale(1);
-    border-color: rgba(34, 197, 94, 0.7);
-    background: rgba(34, 197, 94, 0.24);
-    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.22);
+  40% {
+    transform: scale(1.14);
   }
   100% {
     transform: scale(1);
   }
 }
 
+/* Skeleton of a settings tab: the first open of the page, while the schema
+   that describes the tab is on its way (SettingsSkeleton.tsx), and grey rows
+   in the section rail and the tile grid for the tabs it will bring. The bars
+   are tinted from --text, so they read on every theme. */
+.settings-skeleton-bar {
+  display: block;
+  height: 10px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text) 6%, transparent) 0%,
+    color-mix(in srgb, var(--text) 12%, transparent) 40%,
+    color-mix(in srgb, var(--text) 6%, transparent) 80%
+  );
+  background-size: 300% 100%;
+  animation: chat-skeleton-shimmer 1.6s ease-in-out infinite;
+}
+
+.settings-skeleton-frame {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 12px 16px;
+  border: 1px solid
+    color-mix(in srgb, var(--text) 8%, var(--coddy-blend-base));
+  border-radius: 12px;
+}
+
+.settings-skeleton-legend {
+  width: 34%;
+  height: 12px;
+}
+
+.settings-skeleton-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-skeleton-label {
+  width: 28%;
+}
+
+.settings-skeleton-field:nth-child(odd) .settings-skeleton-label {
+  width: 40%;
+}
+
+.settings-skeleton-input {
+  height: 40px;
+  border-radius: 10px;
+}
+
+.settings-nav-item--placeholder {
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Bars as tall as a tab's line of text, so the rail keeps its height when the
+   tabs arrive (37px a row, like .settings-nav-item). */
+.settings-nav-item--placeholder .settings-skeleton-bar {
+  width: 70%;
+  margin: 4.5px 0;
+}
+
+.settings-nav-item--placeholder:nth-child(3n) .settings-skeleton-bar {
+  width: 52%;
+}
+
+.settings-tile--placeholder {
+  cursor: default;
+  pointer-events: none;
+}
+
+/* The title and the description line of a tile, at their line heights: a
+   grey tile is as tall as the tile that replaces it. */
+.settings-skeleton-title {
+  width: 60%;
+  margin: 3px 0;
+}
+
+.settings-skeleton-desc {
+  width: 85%;
+  height: 8px;
+  margin: 3.5px 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .settings-form-anim,
   .settings-icon-spin,
-  .settings-btn-primary.is-saved {
+  .settings-btn-primary.is-saved,
+  .settings-skeleton-bar {
     animation: none;
   }
 }
@@ -8800,6 +8917,9 @@ html:not([data-theme="light"]) .context-usage-note--error {
 }
 
 .mcp-list {
+  /* Where a server row's name starts: the chevron, its gap, the status dot
+     and its gap. The tools and the trust note under a row start there too. */
+  --mcp-row-inset: calc(22px + 8px + 9px + 8px);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -8820,13 +8940,8 @@ html:not([data-theme="light"]) .context-usage-note--error {
   padding: 6px 0;
 }
 
-.mcp-list-item.is-disabled .mcp-list-item-text,
-.mcp-list-item.is-disabled .mcp-list-item-head > svg {
+.mcp-list-item.is-disabled .mcp-list-item-text {
   opacity: 0.5;
-}
-
-.mcp-list-item-head > svg {
-  flex-shrink: 0;
 }
 
 /* Trailing controls in an MCP row never shrink (same rule as skill rows), so
@@ -8915,7 +9030,10 @@ html:not([data-theme="light"]) .context-usage-note--error {
 }
 
 .mcp-trust-note {
-  margin: 6px 0 0 26px;
+  margin: 6px 0 0 var(--mcp-row-inset);
+  /* The file a declaration came from is one long path: it wraps anywhere
+     rather than run past the row on a phone. */
+  overflow-wrap: anywhere;
   font-size: 0.78rem;
   color: color-mix(in srgb, var(--text) 72%, transparent);
 }
@@ -9094,11 +9212,11 @@ html:not([data-theme="light"]) .context-usage-note--error {
   text-transform: uppercase;
 }
 
-/* Expanded per-tool rows, indented under the server head. */
+/* Expanded per-tool rows, under the server's name. */
 .mcp-tools {
   list-style: none;
   margin: 0 0 6px;
-  padding: 0 0 0 39px;
+  padding: 0 0 0 var(--mcp-row-inset);
   display: flex;
   flex-direction: column;
 }
@@ -9129,7 +9247,7 @@ html:not([data-theme="light"]) .context-usage-note--error {
 
 .mcp-tools-empty {
   margin: 0 0 8px;
-  padding-left: 39px;
+  padding-left: var(--mcp-row-inset);
 }
 
 /* JSON editor card for one .coddy/mcp.json entry (add or edit). */
@@ -11085,10 +11203,6 @@ button.question-prompt-row.question-prompt-row--other.question-prompt-row--activ
 
 [data-theme="light"] .settings-error {
   color: #b91c1c;
-}
-
-[data-theme="light"] .settings-ok {
-  color: #15803d;
 }
 
 [data-theme="light"] .msg-system {
@@ -14252,6 +14366,19 @@ html:not([data-theme="light"]) .swarm-graph-panel {
     overflow-wrap: anywhere;
     overflow: hidden;
     line-height: 1.3;
+  }
+
+  /* MCP servers: four 40px controls beside the name left it a few letters
+     wide. The name and its command line take the first line of the row, and
+     the controls wrap to the row's end below them. */
+  .mcp-list-item-head {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 6px;
+  }
+
+  .mcp-list-item-text {
+    flex-basis: calc(100% - var(--mcp-row-inset));
   }
 }
 

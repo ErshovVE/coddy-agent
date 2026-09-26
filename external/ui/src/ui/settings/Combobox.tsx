@@ -87,6 +87,11 @@ export function Combobox(props: {
         pick(filtered[highlight]!);
       }
     } else if (e.key === "Escape") {
+      // Folding a list on screen is this Escape's step; with none showing the
+      // key is left to the drawer (nav/railEscape.ts).
+      if (open && filtered.length > 0) {
+        e.preventDefault();
+      }
       setOpen(false);
     }
   };

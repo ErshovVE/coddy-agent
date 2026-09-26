@@ -51,11 +51,11 @@ export const messagesRu: Record<string, string> = {
   "settings.fieldHint.aria": "Пояснение: {label}",
   "settings.fieldHint.ariaGeneric": "Пояснение к полю",
   "settings.loading": "Загрузка…",
-  "settings.toast.saved": "Все разделы сохранены. Конфигурация перезагружена.",
   "settings.reload.title": "Перезагрузить с сервера",
   "settings.reload.aria": "Перезагрузить конфигурацию с сервера",
   "settings.save.title": "Сохранить все разделы",
   "settings.save.aria": "Сохранить все разделы конфигурации",
+  "settings.save.saved": "Сохранено",
   "settings.error.schemaLoadFailed": "схема",
   "settings.error.configLoadFailed": "конфиг",
   "settings.error.validationFailed": "ошибка валидации",
@@ -269,6 +269,9 @@ export const messagesRu: Record<string, string> = {
   "settings.schema.agent.model.label": "Модель по умолчанию",
   "settings.schema.agent.model.desc":
     "Логический идентификатор модели из списка моделей, используемый, когда клиент не указал модель.",
+  "settings.schema.agent.queue_mode.label": "Режим очереди",
+  "settings.schema.agent.queue_mode.desc":
+    "Определяет, что делает Enter с сообщением, написанным во время хода. В режиме steer сообщение встраивается в текущий ход на ближайшем шаге, в режиме after_turn запускает отдельный промпт после ответа. Tab отправляет в другом режиме. Если режим не задан, браузер и консоль спросят при первом таком сообщении.",
   "settings.schema.agent.max_turns.label": "Максимум итераций",
   "settings.schema.agent.max_turns.desc":
     "Предел итераций ReAct (вызовы LLM плюс раунды инструментов) на один запрос пользователя; 0 снимает предел.",
@@ -683,6 +686,7 @@ export const messagesRu: Record<string, string> = {
   "mcp.error.delete": "Не удалось удалить {name}",
   "mcp.error.invalidEntry": "Некорректная запись.",
   "mcp.error.saveServer": "Не удалось сохранить сервер",
+  "mcp.error.load": "Не удалось загрузить серверы MCP: {message}",
   "mcp.discovery.legend": "Обнаружение MCP",
   "mcp.discovery.projectServersLabel": "Проектные серверы",
   "mcp.servers.legend": "Серверы MCP",
@@ -730,7 +734,7 @@ export const messagesRu: Record<string, string> = {
   "mcp.discovery.description":
     "Проектный ./.coddy/mcp.json приходит вместе с чекаутом, поэтому команду, которую запустит сессия, выбирает репозиторий, а не вы. В режиме «Спрашивать» его серверы не запускаются и не опрашиваются, пока вы не одобрите именно это объявление для данного рабочего пространства (кнопка-щит в списке ниже); изменение одобренной записи снова потребует одобрения. Серверы, добавленные здесь, одобряются самим фактом записи. Записи из config.yaml и ~/.coddy/mcp.json — ваши и никогда не блокируются.",
   "mcp.servers.description":
-    "Серверы Model Context Protocol из трёх уровней: config.yaml (mcp_servers) и глобальный ~/.coddy/mcp.json, объединённые с локальным ./.coddy/mcp.json проекта (формат Cursor; более поздние уровни переопределяют по имени). Можно отключить весь сервер или отдельные инструменты — переключатели сохраняются в файл, определяющий сервер, и применяются в работающих сессиях на следующем ходе.",
+    "Серверы Model Context Protocol берутся из трёх уровней, это config.yaml (mcp_servers), глобальный ~/.coddy/mcp.json и локальный ./.coddy/mcp.json проекта (формат Cursor, более поздний уровень переопределяет запись с тем же именем). Можно отключить весь сервер или отдельные инструменты. Переключатель глобального сервера сохраняется в файл, где сервер объявлен, переключатель проектного в ~/.coddy/mcp-overrides.json, поэтому checkout остаётся как есть. Переключатель сервера применяется в работающих сессиях сразу, переключатель инструмента на их следующем ходе.",
   "mcp.empty":
     "Серверы MCP не настроены. Добавьте сервер здесь (сохранится в локальный ./.coddy/mcp.json или глобальный ~/.coddy/mcp.json) либо объявите его в mcp_servers в config.yaml.",
   "mcp.note.declaredBy":
@@ -1071,6 +1075,20 @@ export const messagesRu: Record<string, string> = {
   "composer.queueSend": "Поставить сообщение в очередь",
   "composer.queueLabel": "Сообщения в очереди",
   "composer.queueRemove": "Убрать из очереди",
+  "composer.queueModeSteer": "В текущий ход",
+  "composer.queueModeAfterTurn": "После хода",
+  "composer.queueChoiceLabel": "Режим очереди по умолчанию",
+  "composer.queueChoiceQuestion": "Куда Enter отправляет сообщение во время хода?",
+  "composer.queueChoiceSteer": "В текущий ход",
+  "composer.queueChoiceAfterTurn": "После этого хода",
+  "composer.queueModeSteerTitle":
+    "Попадёт в текущий ход на ближайшем шаге. Нажмите, чтобы отправить после ответа.",
+  "composer.queueModeAfterTurnTitle":
+    "Запустит отдельный промпт после ответа. Нажмите, чтобы отправить в текущий ход.",
+  "composer.queueImages.one": "{count} картинка во вложении",
+  "composer.queueImages.few": "{count} картинки во вложении",
+  "composer.queueImages.many": "{count} картинок во вложении",
+  "composer.queueImages.other": "{count} картинки во вложении",
   "composer.queueFull":
     "Очередь заполнена: дождитесь, пока агент прочитает то, что уже стоит.",
   "composer.attachReadFailed":
@@ -1184,6 +1202,7 @@ export const messagesRu: Record<string, string> = {
   "composer.mentionKindScheme": "поиск",
   "composer.docsCommand":
     "Открыть встроенную документацию: /docs [страница или слова]",
+  "composer.mcpCommand": "Открыть настройки MCP-серверов",
   "composer.mentionKindDoc": "документация",
   "composer.mentionSchemeSession": "Другая сессия и её последние сообщения",
   "composer.mentionSchemeRule": "Правило проекта",

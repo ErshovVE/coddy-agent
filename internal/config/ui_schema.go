@@ -372,7 +372,8 @@ func UISchemaMap() map[string]interface{} {
 		},
 		"agent": objectSchema("ReAct loop", "Defaults for the main agent loop (model id and safety caps).",
 			map[string]interface{}{
-				"model": strProp("Default model", "Logical model id from the models list used when the client omits a model."),
+				"queue_mode": map[string]interface{}{"type": "string", "title": "Queue mode", "description": "Preferred action for Enter while a turn runs. Choose steer for the next ReAct step or after_turn for a new turn after the answer.", "enum": []interface{}{"steer", "after_turn"}},
+				"model":      strProp("Default model", "Logical model id from the models list used when the client omits a model."),
 				"max_turns": intProp("Max turns",
 					"Cap on ReAct iterations (LLM calls plus tool rounds) for one user request; 0 means no limit."),
 				"llm_retry_max": intProp("LLM retry max",
@@ -399,7 +400,7 @@ func UISchemaMap() map[string]interface{} {
 					"Longest time one turn spends waiting for limits in total, in milliseconds (default four hours); a pause that would exceed it ends the turn at once, 0 never waits."),
 			},
 			[]string{
-				"model", "max_turns", "llm_retry_max", "llm_retry_base_ms", "llm_min_interval_ms",
+				"model", "queue_mode", "max_turns", "llm_retry_max", "llm_retry_base_ms", "llm_min_interval_ms",
 				"llm_first_token_timeout_ms", "llm_stream_idle_timeout_ms", "loop_guard", "loop_tool_repeat_limit", "loop_stream_repeat_cycles", "loop_nudge_max",
 				"wait_for_limit_reset", "wait_for_limit_reset_max_ms",
 			},
@@ -793,12 +794,15 @@ func toIfaceOrder(keys []string) []interface{} {
 //	             edits the user-global file, where it rarely needs touching.
 //	ui         - toggles the SPA the page is served from; like httpserver, the
 //	             page cannot switch itself off.
+//	revision   - not a setting: it names the configuration a GET document was
+//	             read from (ConfigJSON.Revision) and travels back with the PUT.
 var uiHiddenConfigKeys = map[string]struct{}{
 	"httpserver": {},
 	"mcp":        {},
 	"swarm":      {},
 	"rules":      {},
 	"ui":         {},
+	"revision":   {},
 }
 
 // UISchemaCoversConfigJSONFields checks that UI schema properties match ConfigJSON
