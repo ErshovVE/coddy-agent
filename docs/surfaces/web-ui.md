@@ -256,6 +256,13 @@ Narrow-rail tooltips (desktop)
 - When the rail has **no** wide labels, **hover tooltips** reinforce icon meaning (example **New Chat** on the brand, **History** on history). **Wide labeled rail** hides those tooltips; labels are the affordance.
 - After opening **History**, the history trigger's tooltip must **not** stay visible if the pointer still hovers the rail (see **DESIGN.md**).
 
+Closing a screen with Escape
+
+- Every item of the rail but **Sign out** opens a screen over the chat: **History**, **Scheduler**, **Swarm**, **Docs** and **Settings**. **Escape** closes the one on screen the way its **×** does, and the address goes back to what was under it (the chat, the start screen, or where the reader was opened from), so a reload does not bring the screen back. The swarm screen over a chat closes as its backdrop does; on a relay the swarm map is the home screen and stays.
+- It undoes one step at a time. What is nearer the key takes it first: an open menu (the ⋮ of a History row, the filter menu, **More** on a phone), a picker or the context popover of the composer, the chat title being renamed, the (i) tip of a settings field, the open list of a settings combobox, the documentation search while it has text (the first Escape clears it, the next closes the reader), a confirmation dialog, the image viewer. A screen with a step of its own takes that step before it closes, the step the arrow of its head takes: an open job of the scheduler, or its runs, goes back to the job list; an open row of Settings (a provider, a model) goes back to its list; a section of Settings on a phone or a tablet goes back to the tiles.
+- An Escape that closed a screen goes no further: the question card of the chat under it keeps its questions (with no screen open, Escape skips them as before, and an Escape that closed a picker of the composer does not). A held key, Escape with a modifier and the Escape that ends an input method's composition close nothing.
+- The rule is written once for every screen (**`nav/railEscape.ts`**, called by **`App.tsx`** with a table of every screen of the rail, typed by the rail's items), so a screen added to the rail later closes on Escape without a handler of its own and does not compile without an entry in the table. Contract: **`DESIGN.md`** (**Escape and the screens of the rail**); tests **`nav/railEscape.test.tsx`**, **`App.railEscape.test.tsx`**; scenarios **`features/web_ui_rail_escape.feature`**.
+
 ## Sessions
 
 - Session id is generated client side only after the first message is sent from a new chat.
@@ -1238,8 +1245,8 @@ Guide: `docs/features/built-in-docs.md`. Visual contract: `DESIGN.md` (**Documen
   same glass dock the swarm screen uses. The rail entry reopens the page the
   reader was left on; **`#/docs`** alone settles on the first page of the
   contents with **`replaceState`**, so Back does not return to an empty reader.
-  **F1** again or the **×** control closes it and returns to where it was opened
-  from (a chat, the swarm screen, the scheduler); a click on the backdrop closes it too.
+  **F1** again, **Escape** or the **×** control closes it and returns to where it was
+  opened from (a chat, the swarm screen, the scheduler); a click on the backdrop closes it too.
 - **`/docs [words or page]`** in the composer is the console's command, run in the
   browser (**`ui/docs/docsCommand.ts`**, **`Composer`** **`onDocsCommand`**): the
   draft is cleared and nothing is sent, while a turn runs as well. Alone it
@@ -1280,7 +1287,8 @@ Guide: `docs/features/built-in-docs.md`. Visual contract: `DESIGN.md` (**Documen
   the last key, and drops the hits under itself while the contents stay: page ›
   section, and the snippet with the matched words marked. It is a combobox: Up and
   Down move the selection (**`aria-activedescendant`**), Enter opens the selected
-  hit and folds the list away, Escape clears.
+  hit and folds the list away, Escape clears the search; in an empty box Escape
+  closes the reader.
 - A click on an image of the page opens it over everything (**`ui/components/ImageLightbox.tsx`**,
   rendered into the body): fitted first, **`+`** / **`-`** / the buttons zoom from
   100% to 300%, a click on the image toggles fitted and 200%, **`0`** fits again,
@@ -1416,6 +1424,15 @@ These scenarios are intended to be automated via Playwright against the Vite dev
   - When the app loads
   - Then `data-testid="nav-menu"` is visible
   - And `data-testid="nav-toggle-width"` is not present
+
+- Escape closes the screen the rail opened
+  - Given a chat is open at `#/s/<sessionId>`
+  - When the user opens **Docs**, **Settings**, **History** or **Scheduler** from the rail and presses Escape
+  - Then the screen closes and the address is `#/s/<sessionId>` again
+  - When a row of **Settings** is open (`#/settings/models?id=<model>`) and the user presses Escape
+  - Then the row's form goes back to the list, and the next Escape closes Settings
+  - When the documentation search has text and the user presses Escape in it
+  - Then the search is cleared and the reader stays; the next Escape closes it
 
 - Sessions are drawer only
   - Given any desktop viewport
