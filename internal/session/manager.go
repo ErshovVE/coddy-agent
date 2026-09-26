@@ -54,10 +54,6 @@ type Manager struct {
 	backgroundMCP atomic.Bool
 	// mcpConnectTimeout overrides defaultMCPConnectTimeout; tests shorten it.
 	mcpConnectTimeout time.Duration
-	// unpinnedWarned remembers the configured servers whose unpinned npx
-	// package was already said in the log, keyed by name and spec, so a
-	// hand-written entry is warned about once per process, not per session.
-	unpinnedWarned sync.Map
 
 	// stubTurnMu guards in-process turns when flock is unavailable or SessionDir is empty.
 	stubTurnMu sync.Map // sessionID -> *sync.Mutex

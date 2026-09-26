@@ -10,7 +10,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -80,7 +79,6 @@ func (m *Manager) configuredTargets(cfg *config.Config, cwd string) ([]mcpDialTa
 			continue
 		}
 		srv := srv
-		m.warnUnpinnedOnce(srv.Config)
 		targets = append(targets, mcpDialTarget{
 			Server: srv,
 			Connect: func(ctx context.Context) (*mcp.Client, error) {
@@ -89,21 +87,6 @@ func (m *Manager) configuredTargets(cfg *config.Config, cwd string) ([]mcpDialTa
 		})
 	}
 	return targets, held
-}
-
-// warnUnpinnedOnce logs, once per process, that a configured server runs an
-// npx package without a version. Servers registered through Coddy are
-// pinned as they are written; this is for the ones written by hand.
-func (m *Manager) warnUnpinnedOnce(srv config.MCPServerConfig) {
-	hint := mcp.UnpinnedHint(srv)
-	if hint == "" {
-		return
-	}
-	key := srv.Name + "\x00" + srv.Command + "\x00" + strings.Join(srv.Args, " ")
-	if _, seen := m.unpinnedWarned.LoadOrStore(key, true); seen {
-		return
-	}
-	m.log.Warn("MCP server runs an unpinned npx package", "server", srv.Name, "hint", hint)
 }
 
 // dialConcurrently connects every target at once, each under its own copy of

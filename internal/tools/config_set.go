@@ -5,12 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/config"
 	"github.com/EvilFreelancer/coddy-agent/internal/llm"
-	"github.com/EvilFreelancer/coddy-agent/internal/mcp"
 	"github.com/EvilFreelancer/coddy-agent/internal/tooling"
 )
 
@@ -46,7 +44,7 @@ func ConfigSetTool() *tooling.Tool {
 	}
 }
 
-func executeConfigSet(ctx context.Context, argsJSON string, env *tooling.Env) (string, error) {
+func executeConfigSet(_ context.Context, argsJSON string, env *tooling.Env) (string, error) {
 	if env == nil || strings.TrimSpace(env.ConfigPath) == "" {
 		return "", fmt.Errorf("active config path is unavailable")
 	}
@@ -77,77 +75,15 @@ func executeConfigSet(ctx context.Context, argsJSON string, env *tooling.Env) (s
 	if err := config.DryRunUCICommands(toolConfigPaths(env), allCmds); err != nil {
 		return "", err
 	}
-	// A server the batch adds or changes that runs `npx -y <package>` with no
-	// version is pinned to the registry's current release: the pin is one
-	// more staged command, so config_changes shows it and config_revert drops
-	// it with the rest, and the batch is dry-run again with it in place.
-	pinned, pins := pinStagedNPXServers(ctx, toolConfigPaths(env), allCmds)
-	if len(pins) > 0 {
-		pending = append(pending, pins...)
-		if allCmds, err = config.ParseUCICommands(pending); err != nil {
-			return "", err
-		}
-		if err := config.DryRunUCICommands(toolConfigPaths(env), allCmds); err != nil {
-			return "", err
-		}
-	}
 	if err := saveStagedConfigCommands(env, pending); err != nil {
 		return "", err
 	}
-	result := map[string]interface{}{
+	return marshalToolResult(map[string]interface{}{
 		"ok":          true,
 		"config_file": env.ConfigPath,
 		"pending":     redactPendingForDisplay(pending),
 		"hint":        configSetHint,
-	}
-	if len(pinned) > 0 {
-		result["pinned"] = pinned
-		result["hint"] = configSetHint + " " + configSetPinHint
-	}
-	return marshalToolResult(result, "config_set")
-}
-
-// configSetPinHint follows configSetHint when the batch pinned, or failed to
-// pin, an npx package.
-const configSetPinHint = "Tell the user what `pinned` says - which package was pinned to which version, or why it could not be - before asking them to save."
-
-// pinStagedNPXServers finds the mcp_servers entries the staged batch adds or
-// changes and, for each that runs `npx -y <package>` without a version, reads
-// the registry's current release. It returns the results for the operator
-// and the `set mcp_servers[name=<n>].args=<json>` commands that pin them; a
-// package the registry could not resolve gets a result and no command.
-func pinStagedNPXServers(ctx context.Context, paths config.Paths, cmds []config.UCICommand) ([]mcp.PinResult, []string) {
-	before, after, err := config.StagedMCPServers(paths, cmds)
-	if err != nil {
-		// The batch already passed its dry run; a document this reader cannot
-		// decode is not the batch's fault, and pinning is best effort.
-		return nil, nil
-	}
-	previous := make(map[string]config.MCPServerConfig, len(before))
-	for _, srv := range before {
-		previous[srv.Name] = srv
-	}
-	var results []mcp.PinResult
-	var pins []string
-	for _, srv := range after {
-		if prev, ok := previous[srv.Name]; ok && prev.Command == srv.Command && slices.Equal(prev.Args, srv.Args) {
-			continue
-		}
-		args, res := mcp.PinNPXArgs(ctx, mcp.DefaultResolver(), srv.Name, srv.Command, srv.Args)
-		if res == nil {
-			continue
-		}
-		results = append(results, *res)
-		if args == nil {
-			continue
-		}
-		encoded, err := json.Marshal(args)
-		if err != nil {
-			continue
-		}
-		pins = append(pins, "set mcp_servers[name="+srv.Name+"].args="+string(encoded))
-	}
-	return results, pins
+	}, "config_set")
 }
 
 func marshalToolResult(result map[string]interface{}, toolName string) (string, error) {

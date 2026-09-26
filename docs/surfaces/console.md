@@ -28,10 +28,7 @@ before that waits for its tool list on the status line (`Connecting MCP
 servers`), and Escape ends the wait like any other step. A server that fails
 or that the trust gate holds is said once as a row of the visible transcript,
 with what to do about it. Resuming a session restores its current MCP notices
-after the transcript is cleared. An `npx` package without a version, which
-sends npx to the registry on every start, gets the hint to pin it
-([MCP servers](../features/mcp.md#pinning-npx-packages)). Nothing reads the
-workspace tree: nested `AGENTS.md` files are read on demand, from the folders
+after the transcript is cleared. Nothing reads the workspace tree: nested `AGENTS.md` files are read on demand, from the folders
 a tool enters (`docs/features/rules.md`), so a console opened in a home
 directory (a macOS `~/Library` alone runs to hundreds of thousands of
 entries) draws its frame at once instead of looking hung. The git branch in

@@ -4,8 +4,9 @@ Status: shipped from `fix/319-console-first-frame-before-mcp`. Issue #319
 reported the console hanging on startup after a large skill marketplace had
 been synced; the measurements below found the skills innocent and the
 configured MCP servers guilty. The current reference is
-`docs/features/mcp.md` (*Pinning npx packages*) and `docs/surfaces/console.md`;
-this file keeps the numbers and the decisions as they were taken.
+`docs/features/mcp.md` (*MCP Server Lifecycle*) and `docs/surfaces/console.md`;
+this file keeps the numbers and the decisions as they were taken, including
+the one withdrawn in review (pinning `npx` packages, section 5).
 
 ## 1. Method
 
@@ -117,8 +118,7 @@ for the servers that failed), 26 configured servers:
 
 The 19 that fail with the network up fail in the release as well, where each
 one cost its spawn before the first frame and said nothing; here they are
-rows of the transcript with the reason and, for an `npx` package without a
-version, the hint to pin it. The 3.5 s is the slowest of 26 concurrent
+rows of the transcript with the reason. The 3.5 s is the slowest of 26 concurrent
 spawns and handshakes; a prompt sent inside that window waits on
 `Connecting MCP servers`, one sent after it starts at once.
 
@@ -175,25 +175,24 @@ such a server for as long as npm retried.
   that sees the GitHub tool depending on how fast the operator typed is not a
   behaviour anybody can rely on. Typical dials end before a person submits a
   prompt, so the wait bites only when a server hangs.
-- **Registration pins the version** (`internal/mcp/pin.go`): an entry
-  registered through Settings → MCP servers, `PUT /coddy/mcp/{name}` or
-  `config_set` whose command is `npx` with `-y` and a package that names no
-  exact version is rewritten to `<package>@<version>` before it is written,
-  and the operator is told what was pinned and why. The version comes from an
-  HTTP `GET <registry>/<package>/latest` (`npm_config_registry`, then the
-  public registry, 10 s, through the proxy environment), not from `npm view`:
-  that would put npm's own retry loop, the 71 s above, inside a save request,
-  needs npm on the server's PATH, and is hard to stub in tests. A `.npmrc`'s
-  auth and scoped registries are not read; such a package is saved unpinned
-  with the warning. Hand-written entries are not rewritten: `--dry-run`
-  warns at the server's line and the manager logs once per process.
+- **Coddy does not pin `npx` packages.** The branch first rewrote an
+  `npx -y <package>` entry to `<package>@<version>` whenever Settings, `PUT
+  /coddy/mcp/{name}` or `config_set` registered one, reading the version from
+  the npm registry, and warned about hand-written ones in `--dry-run` and in
+  the log. The maintainer's review withdrew it before the merge: the way a
+  server's command starts is the operator's responsibility, the same as for
+  `uvx`, `docker run` or a binary on `PATH`, and an MCP layer that knows one package
+  runner's flags, calls its registry during a save and rewrites the operator's
+  arguments is coupled to a tool Coddy does not ship. It also covered only
+  stdio servers, while a remote server (streamable HTTP or SSE) can hang the
+  same way on a network that accepts the connection and never answers. What
+  fixes #319 is transport-agnostic: the bounded concurrent dial and the
+  console's background connect above. The measurement of section 3 stays as
+  a note for operators in `docs/features/mcp.md` (*Error Handling*): a
+  version in `args` keeps `npx` off the network.
 
 ## 6. Follow-ups
 
-- `PUT /coddy/config` (the Settings form's `mcp_servers` list) does not pin;
-  the MCP tab and `config_set` cover the paths people register servers by.
-- `coddy mcp add` does not exist; a verb would carry the man page, the
-  completions and `usage_test` with it.
 - A killed `npx` leaves its `node` child until stdin EOF reaches it
   (`exec.CommandContext` has no process group); the timeout makes this more
   frequent than before. The process-group helpers of `internal/platform`

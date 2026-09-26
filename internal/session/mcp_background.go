@@ -142,7 +142,6 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 			entry := MCPServerConnect{Name: r.Target.Server.Config.Name, State: MCPConnectStateConnected}
 			if r.Err != nil {
 				entry.State, entry.Error = MCPConnectStateFailed, r.Err.Error()
-				entry.Hint = mcp.UnpinnedHint(r.Target.Server.Config)
 			} else {
 				entry.Tools = len(r.Client.Tools())
 			}
