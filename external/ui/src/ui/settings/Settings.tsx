@@ -35,6 +35,7 @@ import {
 } from "../scheduler/hashRoute";
 import { useT } from "../i18n/I18nProvider";
 import { hasTranslation, translate } from "../i18n/i18n";
+import { useRailEscapeStep } from "../nav/railEscape";
 
 type ValidateResponse = { ok: boolean; error?: string };
 
@@ -306,6 +307,18 @@ export function Settings(props: {
   const [closeRowSignal, setCloseRowSignal] = useState(0);
   const headSection = isMobileShell ? mobileSection : activeSection;
   const rowTitle = rowOpen && headSection ? itemFormTitle(headSection) : null;
+  const closeRowForm = useCallback(() => setCloseRowSignal((n) => n + 1), []);
+
+  // Escape takes the step the head's arrow takes while the head shows one,
+  // and closes the drawer when it shows none (nav/railEscape.ts).
+  useRailEscapeStep(
+    "settings",
+    rowTitle && headSection
+      ? closeRowForm
+      : isMobileShell && (mobileSection || mobilePending)
+        ? backToGrid
+        : null,
+  );
 
   // Reload with visible feedback: spin the refresh icon and replay the form
   // dissolve/reappear animation (key bump remounts the content) while re-fetching.
@@ -499,7 +512,7 @@ export function Settings(props: {
               })}
               title={t("settings.array.backTo", { list: headSection.label })}
               data-testid="settings-head-back"
-              onClick={() => setCloseRowSignal((n) => n + 1)}
+              onClick={closeRowForm}
             >
               <IconArrowLeft />
             </button>

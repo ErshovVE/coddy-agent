@@ -101,12 +101,15 @@ The composer is a plain `textarea`; keys not listed here keep their browser mean
 | Ctrl+Z / Cmd+Z | composer, right after Improve prompt | restore the draft from before the improvement, once |
 | Enter / Space | context ring button focused | open or close the breakdown |
 | Enter / Escape | model menu filter (shown with more than five backends) | pick the first match / close the menu |
-| Escape | History sidebar, scheduler drawer, job editor | close; the job editor closes first, then the drawer |
+| Escape | a menu of the composer (Mode, Model, Reasoning, Permission), the environment, folder or branch menu | close it, wherever the focus is |
+| Escape | folder browser (Open folder…) | fold the new folder row when it is open, else close the browser as Cancel does |
+| Escape | Skills install search in Settings, with a query typed | clear it and take the marketplace results away; the next Escape is the drawer's |
+| Escape | a screen the rail opened: History, Scheduler, Swarm over a chat, Docs, Settings | close it as its × does, back to what was under it; one step at a time: an open job of the scheduler or its runs, an open row of Settings and a Settings section on a phone or tablet go back first, and an open menu, picker, tip or combobox list, or a search with text in it, takes the key before the screen ([Web UI](../surfaces/web-ui.md#layout)) |
 | Enter | question prompt | send the answer, once every question has one; typed in the composer it still belongs to the composer |
-| Escape | question prompt | skip the questions |
+| Escape | question prompt | skip the questions, unless a screen of the rail is open over the chat or a picker of the composer took the key |
 | Escape / Tab | confirmation dialog | cancel / keep the focus inside the dialog |
 | F1 | anywhere | open the documentation reader, or close it ([Built-in documentation](../features/built-in-docs.md#the-web-ui-reader)) |
 | / | documentation reader, outside a field | put the cursor in its search box |
-| ArrowUp / ArrowDown, Enter, Escape | documentation search box | move the selected hit, open it at its section, clear the search |
+| ArrowUp / ArrowDown, Enter, Escape | documentation search box | move the selected hit, open it at its section, clear the search; in an empty box Escape closes the reader |
 
 Stopping a turn has no key: it is the Stop button in the composer bar. The `@` menu opens as you type an `@` ([Mentions](../features/mentions.md#in-the-web-ui)), and a `:` after a file turns it into the line-range picker; neither is a binding.

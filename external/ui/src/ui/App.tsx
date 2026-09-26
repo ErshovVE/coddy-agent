@@ -133,6 +133,7 @@ import {
   type PendingNewChatWorkspace,
 } from "./sessions/newChatWorkspace";
 import { readNavRailCookie, writeNavRailCookie } from "./nav/navRailCookie";
+import { useRailScreenEscape } from "./nav/railEscape";
 import { readLlmModelCookie, writeLlmModelCookie } from "./chat/llmModelCookie";
 import {
   pickDefaultLlmModelForNewChat,
@@ -2000,12 +2001,22 @@ export function App() {
     }
   }, [sessionId, sessionsOpen]);
 
+  // An open job, or its runs, back onto the list: the editor's close control,
+  // and the step Escape takes before it closes the drawer.
+  const closeSchedulerEditor = useCallback(() => {
+    setSchedulerEditor(null);
+    setSchedulerListHash();
+  }, []);
+
   const closeAllShellDrawers = useCallback(() => {
     setSessionsOpen(false);
     setSchedulerOpen(false);
     setSchedulerEditor(null);
     setTasksOpen(false);
     setDocsRoute(null);
+    // The chat's address that follows does not take the swarm screen down by
+    // itself (applyLocationHash leaves it on a session), so it goes here.
+    setSwarmRoute(false);
     if (parseAppHash().branch === "settings" || parseAppHash().branch === "docs") {
       const sid = sessionId.trim();
       if (sid) {
@@ -2417,31 +2428,6 @@ export function App() {
   useEffect(() => {
     sessionsLoadingMoreRef.current = sessionsLoadingMore;
   }, [sessionsLoadingMore]);
-
-  useEffect(() => {
-    if (!sessionsOpen && !schedulerOpen) {
-      return;
-    }
-    const onKey = (ev: KeyboardEvent) => {
-      if (ev.key !== "Escape") {
-        return;
-      }
-      if (schedulerEditor) {
-        setSchedulerEditor(null);
-        setSchedulerListHash();
-        return;
-      }
-      if (schedulerOpen) {
-        closeSchedulerDrawer();
-        return;
-      }
-      if (sessionsOpen) {
-        setSessionsOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [sessionsOpen, schedulerOpen, schedulerEditor, closeSchedulerDrawer]);
 
   // Forgets the archive moves and removals that no listing still out, or yet
   // to be issued, can be affected by (archiveMoves.ts).
@@ -5410,7 +5396,9 @@ export function App() {
     setSettingsHash();
   }, []);
 
-  const onCloseSettings = useCallback(() => {
+  // Back to the chat on screen, or to the start screen when there is none:
+  // what closing Settings does.
+  const closeToChat = useCallback(() => {
     const sid = sessionId.trim();
     if (sid) {
       setSessionHashInLocation(sid);
@@ -5418,6 +5406,13 @@ export function App() {
       clearSessionRoute();
     }
   }, [sessionId, clearSessionRoute]);
+
+  // The swarm screen over a chat has no close control of its own: Escape
+  // takes it down as the backdrop does, back to the chat.
+  const onCloseSwarm = useCallback(() => {
+    setSwarmRoute(false);
+    closeToChat();
+  }, [closeToChat]);
 
   const onOpenHistoryFromNav = useCallback(() => {
     setSchedulerOpen(false);
@@ -5628,6 +5623,21 @@ export function App() {
     loadingMore: sessionsLoadingMore,
     onLoadMore: () => void loadSessionsList(false),
   };
+
+  // Every screen of the rail, whether it is on screen and what Escape does to
+  // it: the step its close control takes (nav/railEscape.ts).
+  useRailScreenEscape({
+    history: { open: sessionsOpen, close: sessionPanelShared.onClose },
+    scheduler: {
+      open: schedulerOpen && schedulerHttpLinked === true,
+      // An open job or its runs first, back onto the list; the drawer next.
+      close: schedulerEditor ? closeSchedulerEditor : closeSchedulerDrawer,
+    },
+    // On a relay the swarm is the home screen, with nothing under it.
+    swarm: { open: swarmRoute && !atSwarmRoot, close: onCloseSwarm },
+    docs: { open: docsRoute !== null, close: onCloseDocs },
+    settings: { open: settingsRoute, close: closeToChat },
+  });
 
   const toggleRailWidth = () => {
     setRailLabelsWide((prev) => {
@@ -6000,10 +6010,7 @@ export function App() {
               availableModels={llmModelIds}
               defaultModel={llmModel}
               currentCwd={currentSessionCwd}
-              onClose={() => {
-                setSchedulerEditor(null);
-                setSchedulerListHash();
-              }}
+              onClose={closeSchedulerEditor}
               onSaved={(createdId) => {
                 void refreshSchedulerJobs({ silent: true });
                 if (createdId) {
@@ -6046,7 +6053,7 @@ export function App() {
         {settingsRoute ? (
           <div className="settings-dock-cluster">
             <Settings
-              onClose={onCloseSettings}
+              onClose={closeToChat}
               onConfigSaved={() => setConfigEpoch((e) => e + 1)}
               initialSection={settingsSection}
               initialItem={settingsItem}
