@@ -624,16 +624,17 @@ write `$$` by hand.
 **A save keeps the references.** The loaded configuration holds what a reference resolved to, so the
 Settings UI works with the secret itself and with absolute paths. When it saves, a value written as
 `${VAR}`, `${CODDY_HOME}/...` or `~/...` in the file is written back that way as long as it still
-loads as the value being saved - in a single value (`memory.dir`) and in a list entry (`skills.dirs`,
-`subagents.dirs`, `hooks.files`, `instructions.files`) alike; only a value you changed on the screen
-replaces the reference. A key kept in the environment or in `~/.coddy/.env` therefore never lands in
-`config.yaml` because of an unrelated save, and a save of an untouched form leaves the file as it
-was. The same holds for what the process changes after reading the file: a command-line flag, the
-relay listen address `coddy serve` fills in or a pairing token from the environment is not written
-into `config.yaml` unless you change that value on the screen, and a value another save changed
-after you opened the form is not put back by yours. When the file on disk does not load at the
-moment of the save (a broken hand edit, a deleted file), the save writes the configuration the
-server runs, as it always did.
+loads as the value being saved - in a single value (`memory.dir`) and in a list entry
+(`skills.dirs`, `subagents.dirs`, `hooks.files`, `instructions.files`) alike; only a value you
+changed on the screen replaces the reference. A key kept in the environment or in `~/.coddy/.env`
+therefore never lands in `config.yaml` because of an unrelated save, and a save of an untouched form
+writes every value back the way the file spelled it. The same holds for what the process changes
+after reading the file: a command-line flag, the relay listen address `coddy serve` fills in or a
+pairing token from the environment is not written into `config.yaml` unless you change that value on
+the screen, and a value another save changed after you opened the form is not put back by yours.
+When the file on disk does not load at the moment of the save (a broken hand edit, a deleted file),
+the save writes the configuration the server runs, as it always did. Indentation and blank lines are
+not kept: a save writes the file indented by two spaces, without blank lines between sections.
 
 Two placeholders are not environment variables:
 
