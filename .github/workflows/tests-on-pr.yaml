@@ -67,9 +67,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # The ui tag embeds assets that exist only after the SPA is bundled.
+      # The ui tag embeds assets that exist only after the SPA is bundled, and
+      # the MCP scenarios of the http and cli combinations start a server
+      # through the real npx (features/mcp_tool_calls.feature,
+      # examples/cli/cli_e2e_mcp_servers.py).
       - name: Set up Node.js
-        if: contains(matrix.tags, 'ui')
         uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -101,6 +103,16 @@ jobs:
           .venv/bin/pip install -r examples/cli/requirements.txt
           CODDY_BIN="$PWD/build/coddy" .venv/bin/python examples/cli/cli_e2e_startup.py
           CODDY_BIN="$PWD/build/coddy" .venv/bin/python examples/cli/cli_e2e_mcp.py
+
+      # One MCP server of every kind a user configures, on a real pty against
+      # a scripted model the script serves: a native binary (built with go),
+      # an npm package started through the real npx from a local folder (no
+      # registry), a remote server over streamable HTTP and one over SSE. The
+      # console draws first, connects them in the background, and a turn
+      # calls the tool of each.
+      - name: Drive the console's MCP servers of every kind through a real pty
+        if: matrix.tags == 'cli'
+        run: CODDY_BIN="$PWD/build/coddy" .venv/bin/python examples/cli/cli_e2e_mcp_servers.py
 
       # One-shot input through a real shell: pipes, redirects, a 200 KiB prompt
       # file, a while-read loop and a terminal, against a scripted model the
@@ -175,6 +187,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # The MCP scenario of features/mcp_tool_calls.feature starts a server
+      # through the real npx.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
 
       # The test suite runs with ripgrep installed; the same code paths run here.
       - name: Install ripgrep

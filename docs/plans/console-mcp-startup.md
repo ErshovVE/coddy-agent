@@ -200,3 +200,46 @@ such a server for as long as npm retried.
 - The remote console (`--remote`) is not deferred: the server creates the
   session synchronously; it gets the concurrent, bounded dial like every
   surface.
+
+## 7. After the merge with #382
+
+While the branch was open, #382 (the `/mcp` command) landed a concurrent
+dial of its own under one deadline for all servers (`mcpStartTimeout`,
+30 s), servers that deadline cut short parked and dialed again at the
+session's next turn, restored sessions that start nothing until their first
+turn, and single-server reconciles for switches and trust. The branch was
+rebuilt on that machinery rather than beside it:
+
+- The per-server bound stays, inside the shared deadline. A server that never
+  answers now fails on its own 20 s instead of running the 30 s out, so it is
+  not parked; parked, it would have cost every later turn another 30 s. Only a
+  dial cut short from outside (a save reconnecting many sessions, a request
+  that ended) is parked. The single-server reconcile dials through the same
+  bound.
+- The console connects a restored session (`coddy -c`, `/resume`) in the
+  background as it does a new one: it loads a session only to continue it.
+  Every other surface keeps #382's rule.
+- A turn waits for the background connect after its cancel is installed, so
+  Stop ends the wait, and the runner is then entered with the cancelled
+  context, as after any other stopped step. The parked and deferred dials
+  follow the wait.
+- A switch or a trust change during the background connect is kept parked
+  until the connect settles, and `RefreshMCPServer` waits for it first, so a
+  server is neither dialed twice nor left running after it was switched off.
+- A reload that supersedes the background connect marks the servers it
+  cancelled as cancelled rather than failed and sends the console that last
+  snapshot, so the footer clears without a false warning row.
+
+Every kind of server an operator configures is now run through a real turn:
+a program, an npm package through the real `npx` (a local folder, so no
+registry), a streamable HTTP server and an SSE server, in
+`features/mcp_tool_calls.feature` (the HTTP surface, the package registered
+through `PUT /coddy/mcp/{name}` and saved as written) and in
+`examples/cli/cli_e2e_mcp_servers.py` (the console on a real pty, CI's `cli`
+job); `features/cli_tui.feature` covers the background connect of a
+program, streamable HTTP and SSE. The last acceptance criterion of #319,
+300 skills and a skill source that never answers, is a scenario of
+`features/cli_tui.feature` and a case of `examples/cli/cli_e2e_startup.py`
+(first frame 117 ms in the pty, the source never contacted), and
+`docs/features/skills.md` (*When skills are read*) states what a start
+reads.

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -23,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +38,7 @@ import (
 	"github.com/EvilFreelancer/coddy-agent/internal/docs"
 	"github.com/EvilFreelancer/coddy-agent/internal/llm"
 	"github.com/EvilFreelancer/coddy-agent/internal/mcp"
+	"github.com/EvilFreelancer/coddy-agent/internal/mcp/mcptest"
 	"github.com/EvilFreelancer/coddy-agent/internal/rules"
 	"github.com/EvilFreelancer/coddy-agent/internal/session"
 )
@@ -177,6 +180,15 @@ type cliTUIState struct {
 	mcpOffered [][]string
 	// mcpStarted is the marker the project mcp.json stub writes when spawned.
 	mcpStarted string
+	// mcpTokens is what the tool of each mcptest server of the scenario
+	// answers, by server name; mcpRemote are the remote ones to close.
+	mcpTokens map[string]string
+	mcpRemote []*mcptest.Server
+	// skillDirs and skillSources go into the config the app is built with;
+	// silentSource is the skill source that accepts and never answers.
+	skillDirs    []string
+	skillSources []string
+	silentSource *silentListener
 }
 
 // syncBuffer is a goroutine-safe string sink for the one-shot print steps.
@@ -210,6 +222,8 @@ func (s *cliTUIState) reset() {
 	s.blockedCh = nil
 	s.prevSessionID = ""
 	s.mcpRelease, s.mcpOffered, s.mcpStarted = "", nil, ""
+	s.mcpTokens, s.mcpRemote = nil, nil
+	s.skillDirs, s.skillSources, s.silentSource = nil, nil, nil
 	if s.outside != "" {
 		_ = os.RemoveAll(s.outside)
 	}
@@ -254,6 +268,14 @@ func (s *cliTUIState) shutdown() {
 	if s.usageStand != nil {
 		s.usageStand.Close()
 		s.usageStand = nil
+	}
+	for _, srv := range s.mcpRemote {
+		srv.Close()
+	}
+	s.mcpRemote = nil
+	if s.silentSource != nil {
+		s.silentSource.close()
+		s.silentSource = nil
 	}
 	if s.usageEnvSet {
 		_ = os.Setenv(llm.EnvNeuralDeepBaseURL, s.prevBaseEnv)
@@ -457,6 +479,22 @@ func (s *cliTUIState) stubRunner(ctx context.Context, st *session.State, prompt 
 					return string(acp.StopReasonCancelled), nil
 				case <-d.blockCh:
 				}
+			case "call_mcp":
+				// The tool of every MCP server the session holds is called,
+				// the way the agent routes a model's call, and each answer
+				// is a line of the reply.
+				for _, c := range st.GetMCPClients() {
+					out, err := c.CallTool(ctx, mcptest.Tool, `{}`)
+					if err != nil {
+						out = "error: " + err.Error()
+					}
+					line := c.Name() + " answered " + out + "\n"
+					_ = snd.SendSessionUpdate(sessionID, acp.MessageChunkUpdate{
+						SessionUpdate: "agent_message_chunk",
+						Content:       acp.ContentBlock{Type: "text", Text: line},
+					})
+					assistant += line
+				}
 			case "fail":
 				return "", d.err
 			case "end":
@@ -539,6 +577,8 @@ func (s *cliTUIState) buildAppWithModels(neuraldeep, panel bool, models []config
 	}
 	cfg.Tools.PermissionMode = "ask"
 	cfg.Rules.AutoDiscover = &noAuto
+	cfg.Skills.Dirs = append(cfg.Skills.Dirs, s.skillDirs...)
+	cfg.Skills.Sources = append(cfg.Skills.Sources, s.skillSources...)
 	s.cfg = cfg
 	s.store = &session.FileStore{Root: filepath.Join(s.home, "sessions")}
 
@@ -1849,6 +1889,15 @@ func initializeCLITUIScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the console app starts$`, s.theConsoleAppStarts)
 	sc.Step(`^the console config declares an MCP server "([^"]*)" that answers only when released$`, s.consoleDeclaresGatedMCP)
 	sc.Step(`^the MCP server "([^"]*)" is released$`, s.mcpServerReleased)
+	sc.Step(`^the console config declares an MCP server "([^"]*)" run as a binary$`, s.consoleDeclaresBinaryMCP)
+	sc.Step(`^the console config declares an MCP server "([^"]*)" over streamable http$`, func(name string) error { return s.consoleDeclaresRemoteMCP(name, "http") })
+	sc.Step(`^the console config declares an MCP server "([^"]*)" over sse$`, func(name string) error { return s.consoleDeclaresRemoteMCP(name, "sse") })
+	sc.Step(`^the stub turn calls the tool of every MCP server$`, s.stubTurnCallsEveryMCPTool)
+	sc.Step(`^the skills directory holds (\d+) skills$`, s.skillsDirectoryHolds)
+	sc.Step(`^the skill sources name one that accepts connections and never answers$`, s.skillSourcesNameASilentOne)
+	sc.Step(`^the skill source was never contacted$`, s.skillSourceNeverContacted)
+	sc.Step(`^the session holds the (\d+) skills$`, s.sessionHoldsTheSkills)
+	sc.Step(`^the screen shows the answer of every MCP server$`, s.screenShowsEveryMCPAnswer)
 	sc.Step(`^the footer shows "([^"]*)"$`, s.footerShows)
 	sc.Step(`^the footer no longer shows "([^"]*)"$`, s.footerNoLongerShows)
 	sc.Step(`^the stub turn was offered the MCP server "([^"]*)"$`, s.stubTurnWasOfferedMCP)
@@ -2438,4 +2487,165 @@ func TestCLIMCPHelperProcess(t *testing.T) {
 		_ = enc.Encode(map[string]interface{}{"jsonrpc": "2.0", "id": req.ID, "result": result})
 	}
 	os.Exit(0)
+}
+
+// --- MCP servers of every kind (mcptest) ---
+
+// TestHelperMCPTestServer is the stdio server mcptest.Stdio declares: this
+// test binary re-executed, serving its token.
+func TestHelperMCPTestServer(t *testing.T) { mcptest.Main() }
+
+// mcpToken is the token the scenario's server name answers with.
+func (s *cliTUIState) mcpToken(name string) string {
+	if s.mcpTokens == nil {
+		s.mcpTokens = map[string]string{}
+	}
+	token := strings.ToUpper(name) + "-TOKEN"
+	s.mcpTokens[name] = token
+	return token
+}
+
+// consoleDeclaresBinaryMCP adds a stdio server that is a program run
+// directly: this test binary.
+func (s *cliTUIState) consoleDeclaresBinaryMCP(name string) error {
+	if s.app == nil {
+		if err := s.buildApp(); err != nil {
+			return err
+		}
+	}
+	s.cfg.MCPServers = append(s.cfg.MCPServers, mcptest.Stdio(name, s.mcpToken(name)))
+	return nil
+}
+
+// consoleDeclaresRemoteMCP adds a remote server on a local port, over
+// streamable HTTP or the HTTP+SSE transport.
+func (s *cliTUIState) consoleDeclaresRemoteMCP(name, transport string) error {
+	if s.app == nil {
+		if err := s.buildApp(); err != nil {
+			return err
+		}
+	}
+	var srv *mcptest.Server
+	if transport == "sse" {
+		srv = mcptest.NewSSEServer(s.mcpToken(name))
+	} else {
+		srv = mcptest.NewHTTPServer(s.mcpToken(name))
+	}
+	s.mcpRemote = append(s.mcpRemote, srv)
+	s.cfg.MCPServers = append(s.cfg.MCPServers, config.MCPServerConfig{Name: name, Type: transport, URL: srv.URL})
+	return nil
+}
+
+func (s *cliTUIState) stubTurnCallsEveryMCPTool() error {
+	s.directives <- stubDirective{kind: "call_mcp"}
+	return nil
+}
+
+func (s *cliTUIState) screenShowsEveryMCPAnswer() error {
+	for name, token := range s.mcpTokens {
+		if err := s.waitScreen(name+" answered "+token, 10*time.Second); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// --- issue #319: skills at startup ---
+
+// silentListener accepts TCP connections, counts them and never answers.
+type silentListener struct {
+	ln       net.Listener
+	accepted atomic.Int64
+	mu       sync.Mutex
+	held     []net.Conn
+}
+
+func newSilentListener() (*silentListener, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	l := &silentListener{ln: ln}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			l.accepted.Add(1)
+			l.mu.Lock()
+			l.held = append(l.held, conn)
+			l.mu.Unlock()
+		}
+	}()
+	return l, nil
+}
+
+func (l *silentListener) close() {
+	_ = l.ln.Close()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, conn := range l.held {
+		_ = conn.Close()
+	}
+}
+
+// skillsDirectoryHolds writes n generated skills into a directory the app's
+// skills.dirs lists, and builds the app again with it: the manager reads its
+// skill directories when it is made.
+func (s *cliTUIState) skillsDirectoryHolds(n int) error {
+	dir, err := os.MkdirTemp("", "coddy-cli-bdd-skills-*")
+	if err != nil {
+		return err
+	}
+	s.homes = append(s.homes, dir)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("synthetic-%03d", i)
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+			return err
+		}
+		body := fmt.Sprintf("---\nname: %s\ndescription: Synthetic skill number %d.\n---\n\nDo step %d.\n", name, i, i)
+		if err := os.WriteFile(filepath.Join(dir, name, "SKILL.md"), []byte(body), 0o644); err != nil {
+			return err
+		}
+	}
+	s.skillDirs = append(s.skillDirs, dir)
+	return s.buildApp()
+}
+
+func (s *cliTUIState) skillSourcesNameASilentOne() error {
+	l, err := newSilentListener()
+	if err != nil {
+		return err
+	}
+	s.silentSource = l
+	s.skillSources = append(s.skillSources, "http://"+l.ln.Addr().String()+"/marketplace.json")
+	return s.buildApp()
+}
+
+func (s *cliTUIState) skillSourceNeverContacted() error {
+	time.Sleep(300 * time.Millisecond)
+	if n := s.silentSource.accepted.Load(); n != 0 {
+		return fmt.Errorf("the console start contacted the skill source %d time(s)", n)
+	}
+	return nil
+}
+
+func (s *cliTUIState) sessionHoldsTheSkills(n int) error {
+	var got int
+	if err := s.onLoop(3*time.Second, func() {
+		if st := s.mgr.SessionByID(s.app.sessionID); st != nil {
+			for _, sk := range st.GetSkills() {
+				if strings.HasPrefix(sk.Name, "synthetic-") {
+					got++
+				}
+			}
+		}
+	}); err != nil {
+		return err
+	}
+	if got != n {
+		return fmt.Errorf("the session holds %d generated skills, want %d", got, n)
+	}
+	return nil
 }

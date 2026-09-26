@@ -216,6 +216,15 @@ parts of an answer reach the transcript: Coddy passes the `text` content of a
 The MCP server runs as a subprocess. Communication via stdin/stdout (newline-delimited
 JSON-RPC 2.0).
 
+Coddy runs `command` with `args` exactly as they are written: a program by its path or
+by its name on `PATH`, a package runner such as `npx -y <package>` or `uvx <package>`,
+a container started with `docker run -i`. What the command needs is the operator's to
+provide - Node.js for `npx`, the network for a package that is not in its cache yet -
+and Coddy neither rewrites the arguments nor installs anything. A program, an `npx`
+package, a streamable HTTP server and an SSE server are each run through a real turn by
+`features/mcp_tool_calls.feature` and, in the console, by
+`examples/cli/cli_e2e_mcp_servers.py`.
+
 Configuration in `session/new`:
 ```json
 {
@@ -416,7 +425,11 @@ confirm-then-commit workflow, and discovery safety checks.
 
 ## Error Handling
 
-- If an MCP server fails to start, the session still proceeds with a warning
+- If an MCP server fails to start, the session still proceeds with a warning. A
+  server that failed is not dialed again at every turn: a settings reload, its
+  switch (`/mcp`, Settings → MCP servers) or a new session tries it again. Only a
+  dial cut short from outside - a save that reconnects many sessions under one
+  deadline, a request that ended - is retried at the session's next turn
 - A server that starts and never answers `initialize` is given up after 20
   seconds, and the warning names the bound. What the server's own command
   does before it answers is up to the operator: a package runner such as

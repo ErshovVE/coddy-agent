@@ -398,6 +398,14 @@ Feature: Interactive console TUI
     And the operator types the mention "@coddy:mentions"
     Then the mention list offers "features/mentions"
 
+  Scenario: The console starts with hundreds of skills and a skill source that never answers
+    Given the skills directory holds 300 skills
+    And the skill sources name one that accepts connections and never answers
+    When the console app starts
+    Then the session holds the 300 skills
+    And the skill source was never contacted
+    And the editor accepts new input
+
   Scenario: The console draws before its MCP servers answer
     Given the console config declares an MCP server "slow" that answers only when released
     When the console app starts
@@ -405,6 +413,16 @@ Feature: Interactive console TUI
     And the footer shows "MCP 0/1"
     When the MCP server "slow" is released
     Then the footer no longer shows "MCP 0/1"
+
+  Scenario: Servers run as a binary or over the network connect in the background and answer the turn
+    Given the console config declares an MCP server "native" run as a binary
+    And the console config declares an MCP server "remote" over streamable http
+    And the console config declares an MCP server "legacy" over sse
+    When the console app starts
+    Then the screen shows the coddy version header
+    When the operator submits the prompt "ask every server"
+    And the stub turn calls the tool of every MCP server
+    Then the screen shows the answer of every MCP server
 
   Scenario: A prompt sent while an MCP server connects waits for its tools
     Given the console config declares an MCP server "slow" that answers only when released

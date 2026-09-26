@@ -20,15 +20,23 @@ flag-style shortcuts routed to the console: `coddy -c` continues the latest
 session in this folder and `coddy -p "..."` runs one non-interactive prompt
 (`coddy -p -` and `coddy -i FILE` read it from stdin or from a file).
 Startup runs before the terminal enters raw mode: the config, the session
-store, the skills and the rule folders, then the first frame. The configured
-MCP servers are **not** on that path: they connect in the background once the
-console has drawn, all at once and each under a 20-second bound, and the
+store, the skills and the rule folders, then the first frame. The skills are
+read from their folders only, never from `skills.sources`, so hundreds of
+installed skills cost a fraction of a second and a marketplace that does not
+answer costs nothing ([Skills](../features/skills.md#when-skills-are-read)).
+The configured MCP servers are **not** on that path, whatever starts them - a
+program the config names, an npm package run through `npx`, a remote server
+over streamable HTTP or SSE: they connect in the background once the console
+has drawn, for a new session and for one resumed with `coddy -c` or
+`/resume` alike, all at once and each under a 20-second bound, and the
 footer counts them (`MCP 2/5`) until every one has answered. A prompt sent
 before that waits for its tool list on the status line (`Connecting MCP
 servers`), and Escape ends the wait like any other step. A server that fails
 or that the trust gate holds is said once as a row of the visible transcript,
-with what to do about it. Resuming a session restores its current MCP notices
-after the transcript is cleared. Nothing reads the workspace tree: nested `AGENTS.md` files are read on demand, from the folders
+with what to do about it; a failed server is not dialed again at every
+prompt, and switching it off and on in `/mcp` tries it again. Resuming a
+session restores its current MCP notices after the transcript is cleared.
+Nothing reads the workspace tree: nested `AGENTS.md` files are read on demand, from the folders
 a tool enters (`docs/features/rules.md`), so a console opened in a home
 directory (a macOS `~/Library` alone runs to hundreds of thousands of
 entries) draws its frame at once instead of looking hung. The git branch in
@@ -880,8 +888,11 @@ comparison, as described under **Visual model**.
   resume hint and the exit status; a second case configures a stdio MCP
   server that never answers (`sleep 600`) and checks that the first frame
   still comes within seconds, with `MCP 0/1` in the footer, and that the
-  console still leaves through double ctrl+c; that second case is the one
-  startup bound CI enforces. The performance of the startup itself is
+  console still leaves through double ctrl+c; a third one adds 300 installed
+  skills and a `skills.sources` entry that accepts connections and never
+  answers (issue #319), and checks that the first frame comes within two
+  seconds, that a typed key is echoed and that the source was never
+  contacted. Those two are the startup bounds CI enforces. The performance of the startup itself is
   measured, not gated: `make bench-cli-startup` times the first frame and a
   typed probe's echo across skill sets in the same pty, and
   `make bench-cli-startup-real` does it on a private copy of the operator's
@@ -891,6 +902,18 @@ comparison, as described under **Visual model**.
   matrix and on `macos-latest` (job `test-macos`, which also runs the platform packages and
   the console suite on macOS), because the Go suite never opens a pty and the
   console's terminal path is exactly what differs between hosts.
+- MCP servers of every kind on a real pty: `examples/cli/cli_e2e_mcp_servers.py`
+  configures a native program (compiled from Go by the script and run by its
+  path), an npm package started through the real `npx -y` from a local
+  folder (no registry is asked), a remote server over streamable HTTP and one
+  over SSE, and serves a scripted model that calls the tool of each in turn.
+  It checks the first frame, the four tokens in the answer, what the model
+  received from each server, and the four servers listed as connected in
+  `/mcp`. It needs `go` and `npx` on `PATH`; CI runs it in the `cli` job of
+  the Linux test matrix. `features/cli_tui.feature` holds the same story in
+  the Go suite for a program, streamable HTTP and SSE, and
+  `features/mcp_tool_calls.feature` runs every kind, `npx` included, through
+  a real ReAct turn of the HTTP surface.
 - Message queue on a real pty, no model: `examples/cli/cli_e2e_queue.py`
   serves a scripted model whose first answer waits for the script, and checks
   the first-use question and the saved `agent.queue_mode`, Tab queueing the
