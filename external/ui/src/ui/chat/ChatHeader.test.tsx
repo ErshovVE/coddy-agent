@@ -3,6 +3,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ChatHeader } from "./ChatHeader";
 import type { BackgroundTask } from "../tasks/types";
+import { OpenRailScreen } from "../nav/railEscape.fakes";
 
 afterEach(() => cleanup());
 
@@ -13,6 +14,23 @@ test("edit mode shows full-width title input class", () => {
 
   const input = screen.getByRole("textbox");
   expect(input).toHaveClass("chat-title-input");
+});
+
+// History open beside the chat: Escape in the title leaves the title, and
+// History stays for the next one.
+test("Escape leaves the title and not the drawer open beside the chat", () => {
+  const onTitleSave = vi.fn();
+  const closeHistory = vi.fn();
+  render(
+    <>
+      <OpenRailScreen id="history" onClose={closeHistory} />
+      <ChatHeader title="Hello" editable onTitleSave={onTitleSave} />
+    </>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /chat title/i }));
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(closeHistory).not.toHaveBeenCalled();
 });
 
 // The opener of the Tasks panel lives in the sticky header, so it does not scroll

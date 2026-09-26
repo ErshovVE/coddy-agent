@@ -286,6 +286,9 @@ export function QuestionPromptSection(props: QuestionPromptSectionProps) {
     if (resolved) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // An Escape something nearer already took - a picker of the
+        // composer, a menu - is not a skip.
+        if (e.defaultPrevented) return;
         e.preventDefault();
         if (submitting) return;
         void submit(true);

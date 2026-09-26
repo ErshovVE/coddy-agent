@@ -116,14 +116,16 @@ export function ContextBreakdownPopover(props: {
     if (!props.open) {
       return;
     }
+    // Heard in the capture phase: the popover is on top of whatever the rail
+    // has open, so its Escape comes first and is claimed (railEscape.ts).
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key === "Escape") {
         ev.preventDefault();
         props.onClose();
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [props.open, props.onClose]);
 
   useEffect(() => {

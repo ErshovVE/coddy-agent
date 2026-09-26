@@ -86,8 +86,11 @@ export function FieldHint(props: {
       return;
     }
     const close = () => setOpen(false);
+    // Escape takes the tip down first: it is heard in the capture phase and
+    // claimed, so the drawer under it stays (nav/railEscape.ts).
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        e.preventDefault();
         close();
       }
     };
@@ -99,13 +102,13 @@ export function FieldHint(props: {
     // A fixed tip would stay behind while the field scrolls away under it.
     document.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     document.addEventListener("mousedown", onPointerDown);
     document.addEventListener("touchstart", onPointerDown);
     return () => {
       document.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("mousedown", onPointerDown);
       document.removeEventListener("touchstart", onPointerDown);
     };

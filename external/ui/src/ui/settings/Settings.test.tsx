@@ -15,6 +15,7 @@ import {
 } from "./settingsConfigStore";
 import { parseAppHash } from "../scheduler/hashRoute";
 import { initLocale } from "../i18n/i18n";
+import { OpenRailScreen } from "../nav/railEscape.fakes";
 
 const schema = {
   type: "object",
@@ -180,6 +181,46 @@ test("on the narrow shell the first open shows the requested section as a skelet
     expect(container.querySelector(".settings-head-section")?.textContent).toBe(
       "LLM providers",
     );
+  } finally {
+    window.matchMedia = original;
+  }
+});
+
+// Escape takes the step the head's arrow takes while the head shows one: a
+// section on the narrow shell goes back to the tiles, one still loading too,
+// and only then does the drawer close.
+test("on the narrow shell Escape takes a section, even one still loading, back to the tiles first", () => {
+  const original = window.matchMedia;
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: query.includes("max-width"),
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })) as unknown as typeof window.matchMedia;
+  try {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+    const closeDrawer = vi.fn();
+    render(
+      <>
+        <OpenRailScreen id="settings" onClose={closeDrawer} />
+        <Settings onClose={closeDrawer} initialSection="providers" />
+      </>,
+    );
+    expect(screen.getByTestId("settings-skeleton")).toBeTruthy();
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(screen.getByTestId("settings-tile-grid")).toBeTruthy();
+    expect(closeDrawer).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(closeDrawer).toHaveBeenCalledTimes(1);
   } finally {
     window.matchMedia = original;
   }

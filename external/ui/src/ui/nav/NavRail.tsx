@@ -341,8 +341,11 @@ export function NavRail(props: {
     if (!moreOpen) {
       return undefined;
     }
+    // Escape folds the menu first: heard in the capture phase and claimed, so
+    // the screen open under it stays (railEscape.ts).
     const onKey = (ev: KeyboardEvent) => {
       if (ev.key === "Escape") {
+        ev.preventDefault();
         setMoreOpen(false);
         moreBtnRef.current?.focus();
       }
@@ -354,10 +357,10 @@ export function NavRail(props: {
       }
       setMoreOpen(false);
     };
-    document.addEventListener("keydown", onKey);
+    document.addEventListener("keydown", onKey, true);
     document.addEventListener("pointerdown", onDown);
     return () => {
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
       document.removeEventListener("pointerdown", onDown);
     };
   }, [moreOpen]);
