@@ -154,7 +154,9 @@ Top to bottom:
   then `↑in ↓out  N.N%/ctx (auto)` left and `(provider) model [• reasoning]`
   right. The permission mode closes the first line when it is not `ask`,
   `bypass` in the warning colour, so a session that approves everything never
-  looks like one that asks. A setting changed for a number of turns adds a line
+  looks like one that asks; it is the mode of the session on screen, and
+  `/new` and `/resume` move it, with the line of turn overrides, to the
+  session entered. A setting changed for a number of turns adds a line
   in the accent colour under the second one, `next turn: model x • next 3
   turns: reasoning high` (`this turn` while the running turn holds it). The running-task note stays after the turn that started the tasks has
   ended, which is when the status line that counted them is gone. When the
@@ -211,7 +213,7 @@ Slash commands: the settings commands `/model`, `/reasoning` (`/effort`),
 `/think`, `/nothink`, `/agent`, `/plan`, `/ask` and `/permissions`, each with
 `--once` or `--count=N` for the next turns only
 ([Session settings](../features/session-settings.md)); client-side `/resume`,
-`/new`, `/theme`, `/hotkeys`, `/queue`, `/usage`, `/tasks`, `/docs`, `/quit`; server-driven `/compact`, `/export`,
+`/new`, `/theme`, `/hotkeys`, `/queue`, `/usage`, `/tasks`, `/mcp`, `/docs`, `/quit`; server-driven `/compact`, `/export`,
 `/plugin`, and every loaded skill (from the ACP available-commands catalog).
 A bare `/model`, `/reasoning` or `/permissions` opens its picker; with a value
 the command is applied by the session manager, which answers with a notice
@@ -246,6 +248,23 @@ cooldown or a wallet, and a source with nothing to report prints `quota
 unavailable` rather than inventing numbers. Under `--remote` the
 server's own key is read, so a `key rejected` line there is informational
 (sign in on the server).
+
+`/mcp` opens a server list with scope, status and tool count, and `off` beside
+a switched-off server whose status is a trust verdict. Enter opens a server's
+controls for enable/disable, project trust and individual tools. Grant and
+revoke are offered for a project server under `mcp.project_trust: ask` only,
+like the shield of the web UI. Before an approval the console prints the whole
+declaration above the choice - transport, command line or URL, the names of its
+variables and headers, the workspace and the file - and the approval names that
+declaration by its fingerprint, so a checkout rewritten in between is refused
+rather than approved. Disabling a project server stores a switch under the
+operator's home instead of editing the checkout, and a switch reaches the live
+session at once: that server connects or closes, the others keep running. The
+same menu works over `--remote` through the MCP management routes.
+
+![The console /mcp server list with a disabled global server and an untrusted project server](../assets/mcp/mcp-console-dark-1280.png)
+
+*`/mcp` shows both scopes and the trust state before opening a server's controls.*
 
 `/tasks` opens the background tasks of the session in the place of the editor
 ([Background tasks](../features/background-tasks.md#in-the-console)). The
@@ -609,7 +628,8 @@ does not apply). The settings commands change the server's session through
 the same `PATCH /coddy/sessions/{id}` the browser uses, the permission mode
 included: `/permissions`, `--permission-mode` and the dialog's session switch
 all reach the server, and the footer follows the server's
-`session_settings` events. A change made before the server has the session
+`session_settings` events and, when a session is loaded, the snapshot the
+server answers with. A change made before the server has the session
 is held and sent as command lines ahead of the first prompt. `/reasoning`
 and `shift+tab` persist the selected reasoning level on the server session. Sessions persist only on the server; the startup banner shows
 `remote: <url>` and the exit hint prints a reconnect command with `--remote`

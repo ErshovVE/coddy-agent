@@ -406,6 +406,7 @@ func (a *App) adoptSession(id string, modes *acp.ModeState, opts []acp.ConfigOpt
 		a.modeID = modes.CurrentModeID
 	}
 	a.configOpts = opts
+	permission := ""
 	for _, opt := range opts {
 		if opt.ID == "model" {
 			a.modelID = opt.CurrentValue
@@ -413,6 +414,18 @@ func (a *App) adoptSession(id string, modes *acp.ModeState, opts []acp.ConfigOpt
 		if opt.ID == "reasoning" {
 			a.reasoning = opt.CurrentValue
 		}
+		if opt.ID == "permission_mode" {
+			permission = opt.CurrentValue
+		}
+	}
+	// The footer names the permission mode of the session on screen, never
+	// the one of the session the console left (#362). What a session entered
+	// has changed for its next turns arrives with its next snapshot.
+	switch {
+	case switched:
+		a.foot.SetSettings(permission, nil)
+	case permission != "":
+		a.foot.SetPermission(permission)
 	}
 	if a.modelID == "" {
 		a.modelID = a.config().Agent.Model
@@ -1378,6 +1391,7 @@ func (a *App) slashCatalog() []tui.AutocompleteItem {
 		tui.AutocompleteItem{Value: "queue", Label: "queue", Description: "List, drop or clear the messages queued for the running turn"},
 		tui.AutocompleteItem{Value: "usage", Label: "usage", Description: "Show the provider's account usage and limits"},
 		tui.AutocompleteItem{Value: "tasks", Label: "tasks", Description: "List the session's background tasks, read their output, stop one"},
+		tui.AutocompleteItem{Value: "mcp", Label: "mcp", Description: "Manage MCP servers, tools and workspace trust"},
 		tui.AutocompleteItem{Value: "docs", Label: "docs", Description: "Search and read Coddy's built-in documentation (F1); /docs <words or page>"},
 		tui.AutocompleteItem{Value: "quit", Label: "quit", Description: "Exit coddy"},
 	)

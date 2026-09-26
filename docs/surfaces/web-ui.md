@@ -294,7 +294,7 @@ Session title
 *The stream switch of a model row in Settings*
 
 - **New chat** defaults **Model** from cookie **`coddy_llm_model`** when it names a configured backend, else the alphabetically first YAML row. A typed **`/model <id>`** in a sent message is a pick on this surface too and writes the same cookie (turn-scoped **`--once`** / **`--count`** forms do not).
-- **Opening a session** restores **Model** from **`GET /coddy/sessions/{id}/messages`** field **`model`** (session override on disk) and its **`settings`** snapshot, not from the cookie.
+- **Opening a session** restores **Model** from the **`settings`** snapshot of **`GET /coddy/sessions/{id}/messages`** (the session's own model; the top-level **`model`** names what a running turn holds), never from the cookie: the cookie and the start page's pick are the default of a new chat only.
 - Changing **Model** writes the cookie (default for the next **New chat**) and **`PATCH`** **`selectedModelId`** on the active session. ReAct turns still send **`metadata.model`** on **`POST /v1/responses`**.
 - **Many models / long names** — backend ids are **`vendor/model`**. When more than one vendor is configured the menu groups rows under an uppercase vendor header and each row shows only the model name (full id stays in the row tooltip). On desktop the list scrolls with a ~5-row cap. When there are **more than 5** backends a **filter input** appears at the top (auto-focused) that matches the vendor, model name, or full id (case-insensitive); **Enter** picks the first match, **Escape** closes, and an empty result shows a “No models match …” notice. Filter/group/threshold logic is in **`chat/llmModelMenu.ts`** (unit-tested in **`llmModelMenu.test.ts`**; menu wiring covered by **`ComposerModelMenu.test.tsx`**).
 - **Mobile sheet** — on narrow/mobile shells (the **`max-width: 1199px`** shell-stack breakpoint) the **Mode** / **Model** / **Reasoning** menus open as a **full-width bottom sheet** over a dimmed scrim — the same pattern as the slash (**`/`**) and **`@`** pickers — instead of a cramped anchored dropdown. The filter and grouping still apply inside the sheet. Desktop keeps the anchored dropdown.
@@ -306,7 +306,7 @@ Session title
 *The reasoning level dropdown in the composer, levels fetched from the provider*
 
 - A **Reasoning** selector appears in the composer next to **Model** **only** when the active model exposes **`reasoning_levels`** from **`GET /v1/models`** (reasoning models such as gpt-5 / o-series / Claude thinking models). Levels are derived from **`models[].reasoning_levels`** (auto-detected from the model id when unset) and propagated through **`ModelInfo.reasoningLevels`** → **`llmReasoningLevels`** in **`App.tsx`** → **`Composer`**.
-- **New chat** defaults the level from cookie **`coddy_llm_reasoning`**, then the model's **`reasoning_default`**, then **`medium`** (or the first offered level). **Opening a session** restores it from **`GET /coddy/sessions/{id}/messages`** field **`selectedReasoning`**. Switching to a model that does not offer the current level clamps it to a valid one (see **`pickReasoningLevel`** in **`chat/reasoningSelection.ts`**).
+- **New chat** defaults the level from cookie **`coddy_llm_reasoning`**, then the model's **`reasoning_default`**, then **`medium`** (or the first offered level). **Opening a session** restores it from the snapshot's **`settings.reasoning`**, never from the cookie; a session running with thinking off shows **Off** (the snapshot's **`reasoningChoices`** name **`off`** where the provider has the switch), and a session with no level of its own on a model with no **`reasoning_default`** shows **`medium`** or the first level, on entering and after every later snapshot, without sending it until a level is picked. The menu offers **Off** for a session whose snapshot names it. Switching to a model that does not offer the current level clamps it to a valid one (see **`pickReasoningLevel`** in **`chat/reasoningSelection.ts`**).
 - Changing the level writes the cookie and **`PATCH`** **`selectedReasoning`** on the active session; ReAct turns also send **`metadata.reasoning`** on **`POST /v1/responses`** so a brand-new session applies it on the first turn.
 
 ### Session settings: permission chip, turn overrides, live mirror
@@ -631,6 +631,7 @@ Wire and draft
 Picker and segmentation
 
 - The **Commands** group lists the built-ins from **`GET /coddy/commands`** with their argument hint (**`.slash-row-hint`**). Picking **`/model`**, **`/reasoning`** or **`/permissions`** opens that composer selector instead of inserting text, and picking **`/agent`**, **`/plan`** or **`/ask`** switches the mode; a settings command typed out with its value is sent as prompt text and applied by the server.
+- Typing **`/mcp`** in the composer opens **Settings → MCP servers** without sending a turn; words after the command are ignored, as in the console, while a word that only starts with it (`/mcpx`) is an ordinary prompt. The command appears beside `/docs` in the local Commands group; it works from the home composer and from a session.
 - Menu visibility and **`prefix`** derive from **`slashMenuDraftAtCaret`** in **`external/ui/src/ui/skills/draftSlash.ts`** (line-start or whitespace before **`/`**, optional suffix, not inside fences or blockquotes).
 - Mirror highlighting uses **`segmentComposerSlashSpans`** in **`external/ui/src/ui/skills/segmentComposerSlashSpans.ts`** (mid-line **`/`** supported; **`x/foo`** is not a command token).
 
@@ -1133,6 +1134,10 @@ a project-local one awaiting workspace approval):
   error), disabled (gray), unknown transport type (amber, `unsupported`),
   awaiting workspace approval (amber, `needs_approval`), refused by
   `mcp.project_trust: deny` (red, `denied`).
+- A row leads with its chevron and the status dot, with no glyph of its own, and
+  the expanded tools and the trust note start where the name does. On a phone
+  the controls wrap under the name and its command line, so a name is read whole
+  instead of a few letters beside four 40px buttons.
 - The tab holds **two fieldsets**: **MCP discovery** (`.mcp-discovery-box`) above
   **MCP servers** (`.mcp-servers-box`). Discovery carries the `mcp.project_trust`
   policy (`mcp-project-trust` select, `POST /coddy/mcp/project-trust`) and the
@@ -1140,7 +1145,9 @@ a project-local one awaiting workspace approval):
   its own, because it governs exactly the servers listed under it, and like the
   rest of the tab it persists on change instead of joining Save all.
 - Workspace trust for project-local rows (`gated: true`): a shield button
-  (`mcp-trust-{name}`) posts `POST /coddy/mcp/{name}/trust|untrust`, and a
+  (`mcp-trust-{name}`) posts `POST /coddy/mcp/{name}/trust|untrust`, an approval
+  carrying the row's `fingerprint` so a declaration the checkout rewrote since the
+  listing is refused (`409`, shown as the tab's error) instead of approved, and a
   `needs_approval` row carries a note (`mcp-trust-note-{name}`) with the
   `source_path` it was declared in plus the declaration the approval covers
   (`.mcp-trust-facts`, from `declarationFacts` in `mcpServerJson.ts`):
@@ -1151,8 +1158,15 @@ a project-local one awaiting workspace approval):
   no per-server decision left to offer. Such a row is not probed, so it lists no
   tools; the command line stays visible because it is what the operator
   approves. The shield is absent for `global` rows and disabled under `denied`.
-- Server switch toggles `POST /coddy/mcp/{name}/enable|disable`; the change
-  persists into the file that defines the server.
+- Server switch toggles `POST /coddy/mcp/{name}/enable|disable`; a global entry's
+  switch persists into the file that defines it, a project entry's into
+  `<home>/mcp-overrides.json`, leaving the checkout alone. Live sessions connect or
+  close that one server and keep the others running.
+- A listing the server cannot build (`GET /coddy/mcp` answers an error, or the
+  request never arrives) is reported above the list (`mcp-load-error`) with the
+  server's message, which names the file when `mcp-overrides.json` cannot be parsed,
+  instead of reading as "no servers configured"; a refresh that fails keeps the rows
+  the tab already showed.
 - Expanding a row lists tools with per-tool switches
   (`POST /coddy/mcp/{name}/tools/{tool}/enable|disable`); tool switches are
   locked while the server is disabled.
