@@ -288,6 +288,7 @@ sessions:
 # (models[].max_context_tokens, else the window the provider reports, else 128000).
 compaction:
   enable: true             # master switch (manual command and automation)
+  auto_enable: true        # false disables only automatic compaction
   threshold_percent: 80    # auto-compact trigger, 1..100, a percent of the context window
   keep_recent_turns: 2     # last N user turns stay verbatim; 0 summarizes everything
   model: ""                # models[].model for the summarizer; empty = session model

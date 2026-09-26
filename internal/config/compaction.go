@@ -42,6 +42,8 @@ type Compaction struct {
 	// Enabled toggles compaction (the manual command and the automatic trigger).
 	// A nil pointer means the default (true).
 	Enabled *bool `yaml:"enable"`
+	// AutoEnabled turns off only the threshold trigger; manual compaction stays available.
+	AutoEnabled *bool `yaml:"auto_enable"`
 	// ThresholdPercent fires auto-compaction when the estimated context usage
 	// reaches this percent of the effective model's context window (default
 	// 80, valid 1..100): its max_context_tokens, else the window its
@@ -134,6 +136,11 @@ func (r *ResultEviction) Validate() error {
 // IsEnabled reports whether compaction is active. Defaults to true when unset.
 func (c *Compaction) IsEnabled() bool {
 	return c.Enabled == nil || *c.Enabled
+}
+
+// IsAutoEnabled reports whether the automatic trigger may run.
+func (c *Compaction) IsAutoEnabled() bool {
+	return c.IsEnabled() && (c.AutoEnabled == nil || *c.AutoEnabled)
 }
 
 // EffectiveThresholdPercent returns threshold_percent with the default applied

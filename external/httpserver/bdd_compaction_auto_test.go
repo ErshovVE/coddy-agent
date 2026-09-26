@@ -193,6 +193,11 @@ func initializeCompactionAutoScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the session transcript contains a compaction summary row$`, s.transcriptHasSummaryRow)
 	sc.Step(`^the session transcript still contains all (\d+) original exchanges$`, func(int) error { return s.transcriptKeepsAllExchanges() })
 	sc.Step(`^HTTP session stats match the compacted LLM context$`, s.statsMatchCompactedContext)
+	sc.Step(`^the client reloads the session context stats$`, func() error {
+		_, err := s.transcriptJSON()
+		return err
+	})
+	sc.Step(`^the context indicator still reflects the compacted history$`, s.statsMatchCompactedContext)
 }
 
 func TestContextCompactionAutoFeature(t *testing.T) {

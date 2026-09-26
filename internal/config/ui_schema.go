@@ -709,6 +709,7 @@ func UISchemaMap() map[string]interface{} {
 		"compaction": objectSchema("Context compaction", "Summarize older conversation history so long sessions keep fitting the model context window.",
 			map[string]interface{}{
 				"enable":            boolProp("Enabled", "Master switch for compaction (manual command and automatic trigger). Defaults to true."),
+				"auto_enable":       boolProp("Automatic compaction", "Enable the threshold trigger while keeping manual compaction available when off. Defaults to true."),
 				"threshold_percent": intProp("Auto threshold (%)", "Auto-compact when the estimated context reaches this percent of the model's context window (1..100, default 80): its max_context_tokens, else the window its provider reports, else 128000."),
 				"keep_recent_turns": intProp("Keep recent turns", "How many most recent user turns stay verbatim after compaction (default 2; 0 summarizes everything). With no more turns than that, automatic compaction still folds the older ones and keeps the prompt being answered."),
 				"model":             strProp("Summarizer model", "Optional models[].model for the summarization call; empty uses the session model."),
@@ -729,7 +730,7 @@ func UISchemaMap() map[string]interface{} {
 					[]string{"enable", "keep_recent", "min_result_bytes", "start_percent"},
 					nil),
 			},
-			[]string{"enable", "threshold_percent", "keep_recent_turns", "model", "result_eviction"},
+			[]string{"enable", "auto_enable", "threshold_percent", "keep_recent_turns", "model", "result_eviction"},
 			nil),
 		"gateways": objectSchema("Messenger gateways", "Telegram bot gateway (requires the gateway or gateway.telegram build tag).",
 			map[string]interface{}{

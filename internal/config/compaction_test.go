@@ -12,6 +12,9 @@ func TestCompactionDefaults(t *testing.T) {
 	if !c.IsEnabled() {
 		t.Fatal("compaction must be enabled by default")
 	}
+	if !c.IsAutoEnabled() {
+		t.Fatal("automatic compaction must be enabled by default")
+	}
 	if c.ThresholdPercent != CompactionDefaultThresholdPercent {
 		t.Fatalf("threshold = %d, want %d", c.ThresholdPercent, CompactionDefaultThresholdPercent)
 	}
@@ -20,6 +23,14 @@ func TestCompactionDefaults(t *testing.T) {
 	}
 	if (&Compaction{}).EffectiveThresholdPercent() != CompactionDefaultThresholdPercent {
 		t.Fatal("EffectiveThresholdPercent must default without ApplyDefaults")
+	}
+}
+
+func TestCompactionCanDisableOnlyAutomation(t *testing.T) {
+	off := false
+	c := Compaction{AutoEnabled: &off}
+	if !c.IsEnabled() || c.IsAutoEnabled() {
+		t.Fatalf("manual and automatic switches are not independent: %+v", c)
 	}
 }
 
@@ -85,7 +96,8 @@ models:
 agent:
   model: fake/m
 compaction:
-  enable: false
+  enable: true
+  auto_enable: false
   threshold_percent: 70
   keep_recent_turns: 3
   model: fake/m
@@ -94,8 +106,8 @@ compaction:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Compaction.IsEnabled() {
-		t.Fatal("yaml enable: false ignored")
+	if !cfg.Compaction.IsEnabled() || cfg.Compaction.IsAutoEnabled() {
+		t.Fatal("yaml auto_enable: false ignored or manual compaction disabled")
 	}
 	if cfg.Compaction.ThresholdPercent != 70 {
 		t.Fatalf("threshold = %d", cfg.Compaction.ThresholdPercent)

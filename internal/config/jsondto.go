@@ -274,6 +274,7 @@ type SessionsJSON struct {
 // distinction (enabled defaults to true, keep_recent_turns to 2).
 type CompactionJSON struct {
 	Enabled          *bool              `json:"enable,omitempty"`
+	AutoEnabled      *bool              `json:"auto_enable,omitempty"`
 	ThresholdPercent int                `json:"threshold_percent,omitempty"`
 	KeepRecentTurns  *int               `json:"keep_recent_turns,omitempty"`
 	Model            string             `json:"model,omitempty"`
@@ -552,6 +553,7 @@ func ConfigToJSONDTO(c *Config) *ConfigJSON {
 	out.Sessions = SessionsJSON{Dir: c.Sessions.Dir}
 	out.Compaction = CompactionJSON{
 		Enabled:          cloneBoolPtr(c.Compaction.Enabled),
+		AutoEnabled:      cloneBoolPtr(c.Compaction.AutoEnabled),
 		ThresholdPercent: c.Compaction.ThresholdPercent,
 		KeepRecentTurns:  cloneIntPtr(c.Compaction.KeepRecentTurns),
 		Model:            c.Compaction.Model,
@@ -782,6 +784,7 @@ func JSONDTOToConfig(j *ConfigJSON, paths Paths) *Config {
 	cfg.Sessions = Sessions{Dir: j.Sessions.Dir}
 	cfg.Compaction = Compaction{
 		Enabled:          cloneBoolPtr(j.Compaction.Enabled),
+		AutoEnabled:      cloneBoolPtr(j.Compaction.AutoEnabled),
 		ThresholdPercent: j.Compaction.ThresholdPercent,
 		KeepRecentTurns:  cloneIntPtr(j.Compaction.KeepRecentTurns),
 		Model:            j.Compaction.Model,

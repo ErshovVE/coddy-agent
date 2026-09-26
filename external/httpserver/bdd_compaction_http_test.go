@@ -165,7 +165,7 @@ func (s *compactHTTPFeatureState) sessionWithExchanges(n int) error {
 		st.AddMessage(llm.Message{Role: llm.RoleUser, Content: fmt.Sprintf("question %d", i)})
 		st.AddMessage(llm.Message{Role: llm.RoleAssistant, Content: fmt.Sprintf("answer %d", i)})
 	}
-	b := &session.ContextBreakdown{SystemPrompt: 100, Conversation: 10000}
+	b := &session.ContextBreakdown{SystemPrompt: 100, Conversation: 100000}
 	b.Sum()
 	s.beforeUsed = b.EstimatedTotal
 	st.SetLastContextBreakdown(b)
@@ -451,7 +451,7 @@ func (s *compactHTTPFeatureState) statsMatchCompactedContext() error {
 	if st == nil {
 		return fmt.Errorf("session %q not registered", s.sessionID)
 	}
-	wantConversation := session.EstimateTokens(compactHTTPConversationText(session.MessagesForLLM(st.GetMessages())))
+	wantConversation := session.EstimateContextTokens(compactHTTPConversationText(session.MessagesForLLM(st.GetMessages())))
 	if b.Conversation != wantConversation {
 		return fmt.Errorf("HTTP conversation tokens = %d, want %d", b.Conversation, wantConversation)
 	}

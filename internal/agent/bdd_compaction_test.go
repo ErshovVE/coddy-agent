@@ -318,7 +318,7 @@ func (s *compactionFeatureState) reportedACPUsageMatchesContext() error {
 	if b == nil {
 		return fmt.Errorf("session has no context breakdown after compaction")
 	}
-	wantConversation := session.EstimateTokens(conversationText(session.MessagesForLLM(s.st.GetMessages())))
+	wantConversation := estimateConversationTokens(session.MessagesForLLM(s.st.GetMessages()))
 	if b.Conversation != wantConversation {
 		return fmt.Errorf("conversation tokens = %d, want %d", b.Conversation, wantConversation)
 	}

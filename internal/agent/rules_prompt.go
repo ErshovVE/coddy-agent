@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/llm"
@@ -72,13 +73,27 @@ func computeContextBreakdown(
 	messages []llm.Message,
 	toolDefs []llm.ToolDefinition,
 ) *session.ContextBreakdown {
-	toolsTok := session.EstimateTokens(toolsMD)
-	rulesTok := session.EstimateTokens(rulesMD)
-	skillsTok := session.EstimateTokens(skillsMD)
-	mcpTok := estimateMCPTokens(toolDefs)
-	convTok := session.EstimateTokens(conversationText(messages))
-	fullTok := session.EstimateTokens(fullSystem)
-	sysTok := fullTok - toolsTok - rulesTok - skillsTok
+	toolsMDTok := session.EstimateContextTokens(toolsMD)
+	toolsTok := toolsMDTok
+	rulesTok := session.EstimateContextTokens(rulesMD)
+	skillsTok := session.EstimateContextTokens(skillsMD)
+	var mcpTok int
+	// toolsMD already includes names and descriptions. The provider receives
+	// schemas separately, so add those without counting the names twice.
+	for _, def := range toolDefs {
+		encoded, err := json.Marshal(def.InputSchema)
+		if err != nil {
+			continue
+		}
+		if strings.Contains(def.Name, "__") {
+			mcpTok += session.EstimateContextTokens(string(encoded))
+		} else {
+			toolsTok += session.EstimateContextTokens(string(encoded))
+		}
+	}
+	convTok := estimateConversationTokens(messages)
+	fullTok := session.EstimateContextTokens(fullSystem)
+	sysTok := fullTok - toolsMDTok - rulesTok - skillsTok
 	if sysTok < 0 {
 		sysTok = 0
 	}
@@ -115,18 +130,18 @@ func conversationText(msgs []llm.Message) string {
 	return b.String()
 }
 
-func estimateMCPTokens(defs []llm.ToolDefinition) int {
-	var b strings.Builder
-	for _, d := range defs {
-		if strings.Contains(d.Name, "__") {
-			b.WriteString(d.Name)
-			b.WriteString(d.Description)
+func estimateConversationTokens(msgs []llm.Message) int {
+	total := session.EstimateContextTokens(conversationText(msgs))
+	for _, m := range msgs {
+		total += session.EstimateContextTokens(m.Reasoning)
+		for _, call := range m.ToolCalls {
+			total += session.EstimateContextTokens(call.Name) + session.EstimateContextTokens(call.InputJSON)
 		}
+		// A provider receives image pixels rather than the base64 URI. Budget a
+		// conservative fixed amount per image without counting encoded bytes.
+		total += len(m.ImageParts) * 1024
 	}
-	if b.Len() == 0 {
-		return 0
-	}
-	return session.EstimateTokens(b.String())
+	return total
 }
 
 // FilterSkillsForContext wraps skills filter (unchanged semantics for skills only).

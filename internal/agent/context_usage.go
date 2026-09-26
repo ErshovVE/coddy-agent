@@ -22,6 +22,12 @@ func (a *Agent) setContextBreakdown(b *session.ContextBreakdown, persist bool) {
 	}
 	cp := *b
 	cp.Sum()
+	if previous := rs.GetLastContextBreakdown(); previous != nil && cp.ProviderInputTokens == 0 &&
+		previous.ProviderModel == a.state.EffectiveModelID(a.cfg) {
+		cp.ProviderInputTokens = previous.ProviderInputTokens
+		cp.ProviderEstimateTokens = previous.ProviderEstimateTokens
+		cp.ProviderModel = previous.ProviderModel
+	}
 	rs.SetLastContextBreakdown(&cp)
 
 	if persist {
@@ -126,6 +132,39 @@ func (a *Agent) refreshConversationContextUsage(persist bool) {
 	if b == nil {
 		b = &session.ContextBreakdown{}
 	}
-	b.Conversation = session.EstimateTokens(conversationText(a.prunedForLLM(session.MessagesForLLM(a.state.GetMessages()))))
+	b.Conversation = estimateConversationTokens(a.prunedForLLM(session.MessagesForLLM(a.state.GetMessages())))
 	a.setContextBreakdown(b, persist)
+}
+
+// recordProviderInputTokens ties a provider's last input count to the prompt
+// estimate made before its response was appended. A zero count means the
+// provider did not report usage; the estimate remains the only signal.
+func (a *Agent) recordProviderInputTokens(tokens int) {
+	if tokens <= 0 {
+		a.clearProviderInputTokens()
+		return
+	}
+	rs, ok := a.state.(rulesState)
+	if !ok {
+		return
+	}
+	b := rs.GetLastContextBreakdown()
+	if b == nil {
+		return
+	}
+	b.ProviderInputTokens = tokens
+	b.ProviderEstimateTokens = b.EstimatedTotal
+	b.ProviderModel = a.state.EffectiveModelID(a.cfg)
+	rs.SetLastContextBreakdown(b)
+}
+
+func (a *Agent) clearProviderInputTokens() {
+	if rs, ok := a.state.(rulesState); ok {
+		if b := rs.GetLastContextBreakdown(); b != nil {
+			b.ProviderInputTokens = 0
+			b.ProviderEstimateTokens = 0
+			b.ProviderModel = ""
+			rs.SetLastContextBreakdown(b)
+		}
+	}
 }

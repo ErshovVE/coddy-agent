@@ -6185,6 +6185,38 @@ html:not([data-theme="light"]) .mode-item.perm-item.perm-bypass {
   font-size: 13px;
 }
 
+.context-breakdown-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.context-breakdown-compact {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 0;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.context-breakdown-compact:disabled {
+  cursor: default;
+  opacity: 0.55;
+  text-decoration: none;
+}
+
+.context-breakdown-error {
+  color: #dc2626;
+  font-size: 12px;
+}
+
+html:not([data-theme="light"]) .context-breakdown-error {
+  color: #f87171;
+}
+
 .context-breakdown-close {
   border: none;
   background: transparent;

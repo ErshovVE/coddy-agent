@@ -476,6 +476,9 @@ export const messagesRu: Record<string, string> = {
   "settings.schema.compaction.enable.label": "Включено",
   "settings.schema.compaction.enable.desc":
     "Главный выключатель сжатия (ручная команда и автоматический триггер). По умолчанию включено.",
+  "settings.schema.compaction.auto_enable.label": "Автоматическое сжатие",
+  "settings.schema.compaction.auto_enable.desc":
+    "Включает сжатие по порогу. При выключении ручное сжатие остаётся доступным. По умолчанию включено.",
   "settings.schema.compaction.threshold_percent.label": "Порог авто-сжатия (%)",
   "settings.schema.compaction.threshold_percent.desc":
     "Авто-сжатие, когда оценка контекста достигает этой доли от окна контекста модели (1..100, по умолчанию 80): её max_context_tokens, иначе окно, которое сообщает провайдер, иначе 128000.",
@@ -1053,6 +1056,10 @@ export const messagesRu: Record<string, string> = {
   "chat.transcriptEarlier.failed": "Более ранние сообщения не загрузились.",
   "chat.transcriptEarlier.retry": "Повторить",
   "chat.contextTitle": "Контекст",
+  "chat.contextCompactAt": "Сжимать при {percent}%",
+  "chat.contextCompactNow": "Сжать сейчас",
+  "chat.contextCompacting": "Сжимаю…",
+  "chat.contextCompactError": "Не удалось сжать контекст",
   "chat.contextClose": "Закрыть",
   "chat.contextCloseBreakdown": "Закрыть разбор контекста",
   "chat.contextEmpty": "Контекст пока не используется",

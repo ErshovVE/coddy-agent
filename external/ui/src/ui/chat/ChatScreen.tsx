@@ -77,6 +77,8 @@ export function ChatScreen(props: {
   contextBreakdown?:
     | import("./ContextBreakdownPopover").ContextBreakdown
     | null;
+  compactionSettings?: { enabled: boolean; autoEnabled: boolean; threshold: number } | undefined;
+  onContextCompacted?: (() => void) | undefined;
   mode: string;
   modes: string[];
   llmModels?: string[];
@@ -677,6 +679,8 @@ export function ChatScreen(props: {
                 {...(props.contextBreakdown !== undefined
                   ? { contextBreakdown: props.contextBreakdown }
                   : {})}
+                compactionSettings={props.compactionSettings}
+                onContextCompacted={props.onContextCompacted}
                 {...(props.llmModels !== undefined &&
                 props.llmModels.length > 0 &&
                 props.onLlmModelChange !== undefined
@@ -872,6 +876,8 @@ export function ChatScreen(props: {
                   {...(props.contextBreakdown !== undefined
                     ? { contextBreakdown: props.contextBreakdown }
                     : {})}
+                  compactionSettings={props.compactionSettings}
+                  onContextCompacted={props.onContextCompacted}
                   {...(props.llmModels !== undefined &&
                   props.llmModels.length > 0 &&
                   props.onLlmModelChange !== undefined

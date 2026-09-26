@@ -263,6 +263,7 @@ Summarizes older conversation history so long sessions keep fitting the model co
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `compaction.enable` | boolean or null | true | Master switch for compaction (manual command and automatic trigger). Defaults to true. |
+| `compaction.auto_enable` | boolean or null | true | Enable automatic compaction at threshold_percent. Set false to keep manual /compact and the Context popover action available without automatic compaction. Defaults to true. |
 | `compaction.threshold_percent` | integer | 80 | Auto-compaction fires when the estimated context usage reaches this percent of the effective model's context window (1..100): its max_context_tokens, else the window its provider's model listing reports, else 128000 - the window the web UI context ring shows. |
 | `compaction.keep_recent_turns` | integer or null | 2 | How many most recent user turns (each with the agent replies and tool activity after it) stay verbatim; only history before that boundary is summarized. 0 summarizes the whole window. When the window holds no more user turns than this, a compaction keeps fewer: the automatic trigger down to the prompt being answered, the manual command down to none. |
 | `compaction.model` | string | "" | Optional models[].model used for the summarization call. Empty uses the session's effective model. |

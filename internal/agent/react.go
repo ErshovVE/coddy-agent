@@ -1195,6 +1195,7 @@ func (a *Agent) runReActLoop(
 			"input_tokens", response.InputTokens,
 			"cached_input_tokens", response.CachedInputTokens,
 			"output_tokens", response.OutputTokens)
+		a.recordProviderInputTokens(response.InputTokens)
 
 		// Accumulate and broadcast token usage after each LLM call.
 		totalInputTokens += response.InputTokens

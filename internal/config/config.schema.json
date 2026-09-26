@@ -957,6 +957,14 @@
           "description": "Master switch for compaction (manual command and automatic trigger). Defaults to true.",
           "default": true
         },
+        "auto_enable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Enable automatic compaction at threshold_percent. Set false to keep manual /compact and the Context popover action available without automatic compaction. Defaults to true.",
+          "default": true
+        },
         "threshold_percent": {
           "type": "integer",
           "description": "Auto-compaction fires when the estimated context usage reaches this percent of the effective model's context window (1..100): its max_context_tokens, else the window its provider's model listing reports, else 128000 - the window the web UI context ring shows.",

@@ -472,6 +472,9 @@ export const messagesEn: Record<string, string> = {
   "settings.schema.compaction.enable.label": "Enabled",
   "settings.schema.compaction.enable.desc":
     "Master switch for compaction (manual command and automatic trigger). Defaults to true.",
+  "settings.schema.compaction.auto_enable.label": "Automatic compaction",
+  "settings.schema.compaction.auto_enable.desc":
+    "Enable the threshold trigger while keeping manual compaction available when off. Defaults to true.",
   "settings.schema.compaction.threshold_percent.label": "Auto threshold (%)",
   "settings.schema.compaction.threshold_percent.desc":
     "Auto-compact when the estimated context reaches this percent of the model's context window (1..100, default 80): its max_context_tokens, else the window its provider reports, else 128000.",
@@ -1036,6 +1039,10 @@ export const messagesEn: Record<string, string> = {
   "chat.transcriptEarlier.failed": "Earlier messages did not load.",
   "chat.transcriptEarlier.retry": "Retry",
   "chat.contextTitle": "Context",
+  "chat.contextCompactAt": "Compact at {percent}%",
+  "chat.contextCompactNow": "Compact now",
+  "chat.contextCompacting": "Compacting…",
+  "chat.contextCompactError": "Could not compact context",
   "chat.contextClose": "Close",
   "chat.contextCloseBreakdown": "Close context breakdown",
   "chat.contextEmpty": "No context usage yet",
