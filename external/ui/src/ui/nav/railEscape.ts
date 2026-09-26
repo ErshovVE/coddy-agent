@@ -6,12 +6,13 @@ import type { NavItemId } from "./navOverflow";
  *
  * Every item of the rail but Sign out opens a screen over the chat - History,
  * Scheduler, Swarm, Docs, Settings - and Escape closes the one on screen, the
- * way its close control does. The rule is written here once, over a table App
- * fills in for every screen (`RailScreens`), rather than as a handler in each
- * screen: while every screen had to remember a handler of its own, Docs and
- * Settings did not. The table is a Record over `RailScreenId`, so a screen
- * added to the rail does not compile until it says whether it is open and
- * what closes it.
+ * way its close control does (the swarm screen, which has none, the way its
+ * backdrop does). The rule is written here once, over a table App fills in
+ * for every screen (`RailScreens`), rather than as a handler in each screen:
+ * while every screen had to remember a handler of its own, Docs and Settings
+ * did not. The table is a Record over `RailScreenId`, so a screen added to the
+ * rail does not pass the type check (tsc in make lint, the pre-commit hook and
+ * CI) until it says whether it is open and what closes it.
  *
  * Escape undoes one step. What is nearer the key answers first - a menu, a
  * picker, a tip, a search box with text in it, a dialog, the image viewer -

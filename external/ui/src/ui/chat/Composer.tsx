@@ -16,6 +16,7 @@ import { useT } from "../i18n/I18nProvider";
 import { EnvironmentChip } from "./EnvironmentChip";
 import { ImageLightbox } from "../components/ImageLightbox";
 import { PaperclipIcon } from "../components/PaperclipIcon";
+import { useEscapeCloses } from "../components/useEscapeCloses";
 import type { WorkspaceContext } from "./workspaceContext";
 import {
   ContextBreakdownPopover,
@@ -1971,6 +1972,8 @@ export function Composer(props: {
     setMenuAnchorRect(null);
     setLlmQuery("");
   }
+  // Escape closes the selector menu that is open, with or without its filter.
+  useEscapeCloses(menuOpen !== null, closeMenu);
 
   function toggleMenu(
     type: "mode" | "llm" | "reasoning" | "permission",

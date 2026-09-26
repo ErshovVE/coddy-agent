@@ -45,6 +45,18 @@ describe("EnvironmentChip menu direction", () => {
     expect(menu.style.bottom).toBe("");
   });
 
+  // The menu opens from a click, so the focus stays on the chip: Escape has
+  // to reach the menu from there too.
+  it("closes on Escape with the focus still on the chip", async () => {
+    render(<EnvironmentChip />);
+    const btn = screen.getByTestId("composer-env-btn");
+    btn.getBoundingClientRect = () => rect(48);
+    fireEvent.click(btn);
+    await screen.findByTestId("composer-env-menu");
+    expect(fireEvent.keyDown(btn, { key: "Escape" })).toBe(false);
+    expect(screen.queryByTestId("composer-env-menu")).toBeNull();
+  });
+
   it("keeps opening upward from the composer at the foot", async () => {
     render(<EnvironmentChip />);
     const btn = screen.getByTestId("composer-env-btn");

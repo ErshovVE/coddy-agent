@@ -15,6 +15,7 @@ import {
   subscribeShellStack,
 } from "../shellBreakpoint";
 import { useActiveEnvHealth } from "../env/activeHealth";
+import { useEscapeCloses } from "../components/useEscapeCloses";
 
 type Remote = { name: string; url: string };
 type Health = "checking" | "up" | "down";
@@ -107,6 +108,9 @@ export function EnvironmentChip() {
     setOpen(false);
     setAdding(false);
   };
+  // The menu opens from a click, so the focus stays on the chip: Escape is
+  // heard on the page, not on the menu.
+  useEscapeCloses(open, closeMenu);
 
   const label =
     env.mode === "local"
@@ -174,12 +178,6 @@ export function EnvironmentChip() {
                         }
                       : { left: anchor.left, top: anchor.bottom + 8 }
                 }
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    closeMenu();
-                  }
-                }}
               >
                 <div className="mode-menu-group-label">
                   {t("composer.env.groupEnvironment")}

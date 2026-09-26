@@ -13,6 +13,7 @@ import { filterInstallableMatches } from "./installableMatches";
 import { schemaFieldDesc } from "./schemaI18n";
 import { useT } from "../i18n/I18nProvider";
 import { translate } from "../i18n/i18n";
+import { useEscapeCloses } from "../components/useEscapeCloses";
 
 // Cap the install dropdown so a broad query never floods the menu; anything
 // beyond this is summarized as a "+N more" hint that invites a narrower search.
@@ -481,6 +482,9 @@ export function SkillsSection(props: {
   const installQ = installQuery.trim();
   const { matches: installMatches, more: installMore } =
     filterInstallableMatches(available ?? [], installQ, INSTALL_MENU_LIMIT);
+  // The results hang under the box while a search is typed: Escape takes them
+  // away, clearing the search, before the drawer hears the key.
+  useEscapeCloses(installQ !== "", () => setInstallQuery(""));
 
   const fieldOverride: FieldOverride = ({ path, value: fv, onChange: fc }) => {
     if (path === "sources") {

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useT } from "../i18n/I18nProvider";
+import { useEscapeCloses } from "../components/useEscapeCloses";
 import { createPortal } from "react-dom";
 import {
   cleanPathInput,
@@ -115,6 +116,17 @@ export function WorkspaceFolderModal(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.open, props.startPath]);
 
+  // Escape undoes one step: the name row of a new folder, then the dialog,
+  // which it cancels as the close control does.
+  useEscapeCloses(props.open, () => {
+    if (creating) {
+      setCreating(false);
+      setNewName("");
+      return;
+    }
+    props.onClose();
+  });
+
   if (!props.open) {
     return null;
   }
@@ -198,11 +210,6 @@ export function WorkspaceFolderModal(props: Props) {
                 if (e.key === "Enter") {
                   e.preventDefault();
                   void createFolder();
-                }
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  setCreating(false);
-                  setNewName("");
                 }
               }}
             />
