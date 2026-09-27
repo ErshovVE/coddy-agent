@@ -105,7 +105,8 @@ Top to bottom:
 
 - **Header**: `coddy` (bold accent) + dim version; a dim hint line
   (`escape interrupt · ctrl+c/ctrl+d clear/exit · / commands · ctrl+o more`);
-  `[Context]` (instruction files) and `[Skills]` (loaded skill names).
+  a dim welcome line; `[Context]` (the files `instructions.files` names) and
+  `[Skills]` (the loaded skills, the bundled ones first).
   `ctrl+o` expands the full hint list and adds `[Rules]` and `[MCP]` sections.
 - **Transcript**: user messages in full-width background boxes; assistant
   markdown (headings, bold/italic, inline code, ``` fences with borders,
@@ -170,7 +171,7 @@ Top to bottom:
   `@Dockerfile:21-31` or `@f.go#L21-31`, absolute paths included. In remote mode the
   list comes from the server that runs the session. The grammar, what each kind
   attaches and the limits are in [Mentions](../features/mentions.md).
-- **Footer**: dim `cwd (git-branch) • title [• plan] [• MCP N/M] [• N tasks running (/tasks)] [• accept edits|bypass]`,
+- **Footer**: dim `cwd (git-branch) [• plan|ask] [• MCP N/M] [• N tasks running (/tasks)] [• accept edits|bypass]`,
   then `↑in ↓out  N.N%/ctx (auto)` left and `(provider) model [• reasoning]`
   right. The permission mode closes the first line when it is not `ask`,
   `bypass` in the warning colour, so a session that approves everything never
@@ -183,8 +184,8 @@ Top to bottom:
   count is there only while a configured server is still connecting after
   the first frame - connected out of the ones being dialed, a held project
   declaration not counted - and leaves the line once every one has
-  answered. When the line does not fit, the path and the title give way and
-  the notes stay.
+  answered. When the line does not fit, the path gives way and the notes
+  stay.
   A third line appears while the active model's provider reports account
   usage (today: `neuraldeep`, read from the hub's `GET /v1/limits`; `codex`,
   read from the Codex backend's usage endpoint; `devin`, read from the
@@ -410,7 +411,8 @@ offers the same tools; under `--remote` the server owns the reload.
 
 | Key | Action |
 |-----|--------|
-| enter | send |
+| enter | send when idle; during a turn, queue the draft in `agent.queue_mode` (the first time asks which) |
+| tab | during a turn with a draft, queue it in the other mode |
 | shift+enter / ctrl+j | newline (backslash+enter also splits) |
 | escape | interrupt the running turn (`HandleSessionCancel`), or stop a `!!` command |
 | ctrl+c | clear editor; twice within 2 s exits |
@@ -779,11 +781,11 @@ and is visible via `coddy mcp list` (approve with `coddy mcp trust <name>`).
 
 ![The launch line, header, editor and footer of a fresh console](../assets/screenshot-console-start.png)
 
-*The launch line with the header, the `[Context]` and `[Skills]` sections, the editor and the footer*
+*The launch line with the header, the `[Context]` and `[Skills]` sections, the editor and the footer with the account usage of the model's provider*
 
 ![The ctrl+l model selector](../assets/screenshot-console-models.png)
 
-*The ctrl+l model selector*
+*The ctrl+l model selector: every configured model, the current one marked with the arrow*
 
 ![The first frame with the MCP count in the footer while a server is still connecting](../assets/cli-tui/21-mcp-connecting.png)
 
@@ -838,13 +840,17 @@ launch line and header with `[Context]` / `[Skills]`
 (`screenshot-console-models.png`), and a finished turn with a tool box, a
 thinking block, and the footer counters (`screenshot-console-chat.png`). Use
 these in README and on the site: they show what a user actually sees in a
-terminal emulator.
+terminal emulator. They are taken on a clean `CODDY_HOME` with two skills of
+its own and a small project with an `AGENTS.md`, so the header lists what a
+new user sees.
 
-`docs/assets/cli-tui/` is the deterministic set produced by
-`examples/cli/capture.py`, which drives the shared e2e driver and renders each
-state from the pyte buffer as `.txt`, styled `.html`, and `.png`. Those are
-regression references for colors and cell layout, not marketing images;
-regenerate them when the transcript chrome changes. The four usage states
+`docs/assets/cli-tui/` holds PNGs rendered from the pyte buffer by one
+`examples/cli/capture_*.py` script per feature, each driving the shared e2e
+driver against a scripted stand-in model. Those are references for colors and
+cell layout, not marketing images; regenerate the ones whose chrome changed.
+`examples/cli/capture.py` renders the basic states (startup, the slash menu, the
+model selector, a turn) for a comparison on your own machine; none of them is
+committed. The four usage states
 (`09-usage-footer`, `10-usage-warning`, `12-usage-resuming`,
 `11-usage-blocked`) come from `examples/cli/capture_usage.py`, which stands
 a fake hub `GET /limits` behind `CODDY_NEURALDEEP_BASE_URL`, plus one chat
@@ -862,8 +868,6 @@ and types `@ment` against a provider that is never asked anything.
 `/model --once /reasoning --count=3`, with a temporary home standing in for
 `HOME` too, so the header lists the bundled skills only.
 
-`docs/assets/pi-tui-reference/` holds captures of the pi original for
-comparison, as described under **Visual model**.
 
 ## Testing
 

@@ -220,9 +220,9 @@ Private repositories rely on your ambient `git` credentials; API URLs are checke
 
 ## Directory layout
 
-![Settings, Skills tab: the resolved skills.dirs, remote sources and installed skills](../assets/screenshot-fullhd-settings-skills.png)
+![Settings, Skills tab: auto-discovery, the resolved skills.dirs, remote sources and installed skills](../assets/screenshot-fullhd-settings-skills.png)
 
-*Settings, Skills tab: the resolved skills.dirs, remote sources and installed skills*
+*Settings, Skills tab: auto-discovery, the resolved skills.dirs, the remote sources with the built-in one greyed out, and the installed skills, the bundled ones among them*
 
 Coddy searches all directories in `skills.dirs` and deduplicates by skill name. **Later directories have higher priority** — if the same skill name appears in multiple directories, the version from the directory listed last wins.
 

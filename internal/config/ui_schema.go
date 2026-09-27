@@ -610,7 +610,7 @@ func UISchemaMap() map[string]interface{} {
 				"dir":                         strProp("Memory root", "Filesystem root for memory markdown; empty uses ${CODDY_HOME}/memory."),
 				"wait_seconds":                intProp("Wait for the report (seconds)", "How long a turn waits for the memory subagent's report before its first model call; 0 never waits (default 20)."),
 				"timeout_seconds":             intProp("Run timeout (seconds)", "Hard limit of one memory run, capped by tools.background.max_timeout_seconds (default 300)."),
-				"keep_runs":                   intProp("Runs kept per session", "Finished memory runs kept in the Tasks drawer per session, task record and child transcript alike; 0 keeps all (default 20)."),
+				"keep_runs":                   intProp("Runs kept per session", "Finished memory runs kept in the Tasks panel per session, task record and child transcript alike; 0 keeps all (default 20)."),
 				"recall_max_turns":            intProp("Recall max turns", "Bounds the memory subagent's rounds together with persist_max_turns; the cap is the larger of the two."),
 				"persist_max_turns":           intProp("Persist max turns", "Bounds the memory subagent's rounds together with recall_max_turns; the cap is the larger of the two."),
 				"copilot_max_tokens":          intProp("Max tokens per call", "Completion token cap for the memory model's calls."),
