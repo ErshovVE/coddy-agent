@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"image/color"
 	"os"
 	"path/filepath"
@@ -190,5 +191,62 @@ func TestReadOfAnImageIsRefusedForAModelThatDoesNotReadImages(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(session.AssetsPath(sessionDir)); len(entries) > 0 {
 		t.Errorf("a refused picture was saved with the assets: %v", entries)
+	}
+}
+
+// Pictures stay in the history and go out with every request. A request
+// carries only the newest of them, at most toolImagesMaxCount and
+// toolImagesMaxBytes of data, so a session that read many screenshots keeps
+// fitting what a provider takes (Anthropic: 32 MB a request, and 2000 pixels a
+// side once it holds more than 20 pictures); the older ones are named as left
+// out.
+func TestWithToolImagesSendsOnlyTheNewestPicturesARequestCanHold(t *testing.T) {
+	var history []llm.Message
+	history = append(history, llm.Message{Role: llm.RoleUser, Content: "look"})
+	for i := 0; i < toolImagesMaxCount+2; i++ {
+		id := fmt.Sprintf("r%02d", i)
+		history = append(history,
+			llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: id, Name: "read"}}},
+			toolResultWith(id, imagePart(fmt.Sprintf("p%02d.png", i))))
+	}
+	out := withToolImages(history, true)
+	sent := 0
+	var leftOut []string
+	for _, m := range out {
+		sent += len(m.ImageParts)
+		if m.Role == llm.RoleUser && strings.Contains(m.Content, "left out") {
+			leftOut = append(leftOut, m.Content)
+		}
+	}
+	if sent != toolImagesMaxCount {
+		t.Fatalf("the request carries %d pictures, want %d", sent, toolImagesMaxCount)
+	}
+	if len(leftOut) != 2 || !strings.Contains(leftOut[0], "p00.png") || !strings.Contains(leftOut[1], "p01.png") {
+		t.Errorf("the two oldest pictures are not named as left out: %q", leftOut)
+	}
+	last := out[len(out)-1]
+	if got := imageNames(last); len(got) != 1 || got[0] != fmt.Sprintf("p%02d.png", toolImagesMaxCount+1) {
+		t.Errorf("the newest picture is not sent: %v", got)
+	}
+
+	big := func(name string) llm.ImagePart {
+		p := imagePart(name)
+		p.DataURL = "data:image/png;base64," + strings.Repeat("A", 8<<20)
+		return p
+	}
+	heavy := []llm.Message{
+		{Role: llm.RoleUser, Content: "look"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "a", Name: "read"}, {ID: "b", Name: "read"}, {ID: "c", Name: "read"}}},
+		toolResultWith("a", big("a.png")),
+		toolResultWith("b", big("b.png")),
+		toolResultWith("c", big("c.png")),
+	}
+	out = withToolImages(heavy, true)
+	pictures := out[len(out)-1]
+	if got := imageNames(pictures); strings.Join(got, ",") != "b.png,c.png" {
+		t.Errorf("under the byte budget the request carries %v, want the two newest", got)
+	}
+	if !strings.Contains(pictures.Content, "a.png") || !strings.Contains(pictures.Content, "left out") {
+		t.Errorf("the step's message %q does not name a.png as left out", pictures.Content)
 	}
 }

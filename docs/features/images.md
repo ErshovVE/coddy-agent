@@ -31,7 +31,7 @@ A picture is refused, with the reason, when:
 - a side is longer than 8000 pixels;
 - the content looks like an image but cannot be decoded.
 
-For the last three the agent can save a scaled-down copy with a command and read that. An animated GIF is shown as its first frame. Any other binary file - a PDF, an archive - is refused with its type and size, as before.
+For the last three the agent can save a scaled-down copy with a command and read that. A GIF is shown as its first frame, as a PNG: every provider takes that, and the rest of an animation is never decoded. Any other binary file - a PDF, an archive - is refused with its type and size, as before.
 
 ## What the model is sent
 
@@ -39,7 +39,7 @@ The picture stays with the result of the `read` that produced it. The transcript
 
 What goes to the provider is built from that transcript on every request. An OpenAI-compatible tool result cannot hold an image, and nothing may come between the results of one step, so the pictures of a step travel in one user message right after the step's tool results, named in the order they were read. The message is rebuilt the same way each time, so the provider's prompt cache keeps working.
 
-A picture costs context like anything else the model reads. When [result eviction](compaction.md#result-eviction) collapses an old `read`, its picture goes too; the model reads the file again if it needs it. A session switched to a model without `multimodal` sends no picture at all, and the model is told which ones the earlier steps returned.
+A picture costs context like anything else the model reads, and it goes out with every request after the step that read it. A request carries at most the 20 newest pictures and 20 MB of them, which keeps a session of many screenshots within what a provider takes (the Anthropic API refuses a request over 32 MB, and wants pictures of at most 2000 pixels a side once a request holds more than 20); the step of an older picture names it as left out. When [result eviction](compaction.md#result-eviction) collapses an old `read`, its picture goes too. Either way the model reads the file again if it needs it. A session switched to a model without `multimodal` sends no picture at all, and the model is told which ones the earlier steps returned.
 
 Coddy keeps a copy of every picture it showed the model with the session's assets (`~/.coddy/sessions/<id>/assets/`), under the file's name plus a digest of its content. The surfaces show that copy, so a screenshot overwritten a minute later still previews as the model saw it.
 

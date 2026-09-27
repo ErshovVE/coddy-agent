@@ -105,13 +105,25 @@ func dataURLType(dataURL string) string {
 	return ""
 }
 
+const (
+	// toolImagesMaxCount and toolImagesMaxBytes bound the pictures one request
+	// carries, the newest first. Pictures stay in the history and go out with
+	// every request, and a provider refuses a request past its limits: the
+	// Anthropic API takes 32 MB in all, and pictures of at most 2000 pixels a
+	// side once a request holds more than 20 of them.
+	toolImagesMaxCount = 20
+	toolImagesMaxBytes = 20 << 20
+)
+
 // withToolImages returns msgs as the provider is sent them: the pictures the
 // tool results carry move into one user message right after each run of tool
 // results. A tool message cannot hold an image in the OpenAI-compatible
 // schema, and a user message between the results of one step would break the
 // assistant(tool_calls) -> tool results adjacency strict endpoints require.
-// Built from the history alone, the projection is the same bytes on every
-// request, so the provider's prompt cache holds.
+// Only the newest pictures within toolImagesMaxCount and toolImagesMaxBytes
+// go out; the step of an older one names it as left out. Built from the
+// history alone, the projection is the same bytes on every request, so the
+// provider's prompt cache holds until a new picture pushes an old one out.
 //
 // A model that does not read images - the session switched to one after the
 // read - is sent no picture at all, its prompt attachments included, and is
@@ -128,17 +140,18 @@ func withToolImages(msgs []llm.Message, readsImages bool) []llm.Message {
 	if !needed {
 		return msgs
 	}
+	kept := newestToolImages(msgs, readsImages)
 	out := make([]llm.Message, 0, len(msgs)+2)
 	var pending []llm.ImagePart
-	var names []string
+	var names, omitted []string
 	flush := func() {
-		if len(pending) == 0 {
+		if len(names) == 0 && len(omitted) == 0 {
 			return
 		}
-		out = append(out, toolImagesMessage(pending, names, readsImages))
-		pending, names = nil, nil
+		out = append(out, toolImagesMessage(pending, names, omitted, readsImages))
+		pending, names, omitted = nil, nil, nil
 	}
-	for _, m := range msgs {
+	for i, m := range msgs {
 		if m.Role != llm.RoleTool {
 			flush()
 			if !readsImages {
@@ -147,9 +160,14 @@ func withToolImages(msgs []llm.Message, readsImages bool) []llm.Message {
 			out = append(out, m)
 			continue
 		}
-		for _, p := range m.ImageParts {
-			pending = append(pending, p)
-			names = append(names, fmt.Sprintf("%s (from call %s)", p.Name, m.ToolCallID))
+		for j, p := range m.ImageParts {
+			ref := fmt.Sprintf("%s (from call %s)", p.Name, m.ToolCallID)
+			if kept[[2]int{i, j}] {
+				pending = append(pending, p)
+				names = append(names, ref)
+			} else {
+				omitted = append(omitted, ref)
+			}
 		}
 		m.ImageParts = nil
 		out = append(out, m)
@@ -158,20 +176,57 @@ func withToolImages(msgs []llm.Message, readsImages bool) []llm.Message {
 	return out
 }
 
+// newestToolImages picks the pictures of the tool results a request carries,
+// keyed by message and part index: from the newest back, until
+// toolImagesMaxCount pictures or toolImagesMaxBytes of data are taken. None
+// for a model that does not read images.
+func newestToolImages(msgs []llm.Message, readsImages bool) map[[2]int]bool {
+	kept := map[[2]int]bool{}
+	if !readsImages {
+		return kept
+	}
+	count, size := 0, 0
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != llm.RoleTool {
+			continue
+		}
+		parts := msgs[i].ImageParts
+		for j := len(parts) - 1; j >= 0; j-- {
+			n := len(parts[j].DataURL)
+			if count >= toolImagesMaxCount || size+n > toolImagesMaxBytes {
+				return kept
+			}
+			count++
+			size += n
+			kept[[2]int{i, j}] = true
+		}
+	}
+	return kept
+}
+
 // toolImagesMessage is the user message that carries the pictures of one
-// step to the provider, or tells a model that cannot take them what it is not
-// shown.
-func toolImagesMessage(parts []llm.ImagePart, names []string, readsImages bool) llm.Message {
+// step to the provider and names the ones left out of the request, or tells a
+// model that cannot take pictures what it is not shown.
+func toolImagesMessage(parts []llm.ImagePart, names, omitted []string, readsImages bool) llm.Message {
 	if !readsImages {
 		return llm.Message{
 			Role: llm.RoleUser,
 			Content: "The tool calls above returned pictures the current model cannot be shown: " +
-				strings.Join(names, ", ") + ".",
+				strings.Join(omitted, ", ") + ".",
 		}
 	}
-	return llm.Message{
-		Role:       llm.RoleUser,
-		Content:    "The pictures the tool calls above returned, in order:\n- " + strings.Join(names, "\n- "),
-		ImageParts: parts,
+	var b strings.Builder
+	if len(names) > 0 {
+		b.WriteString("The pictures the tool calls above returned, in order:\n- ")
+		b.WriteString(strings.Join(names, "\n- "))
 	}
+	if len(omitted) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("Pictures the tool calls above returned, left out of this request to keep it within what the provider takes; read the file again to see one: ")
+		b.WriteString(strings.Join(omitted, ", "))
+		b.WriteString(".")
+	}
+	return llm.Message{Role: llm.RoleUser, Content: b.String(), ImageParts: parts}
 }

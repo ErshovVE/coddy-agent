@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // ToolImage is a picture a tool call handed the model (read on an image
@@ -39,8 +40,11 @@ func AssetThumbnailRoute(sessionID, assetName string) string {
 	return AssetRoute(sessionID, assetName) + "/thumbnail"
 }
 
+// toolImageStemMax bounds the part of a copy's name taken from the file's.
+const toolImageStemMax = 80
+
 // toolImageExt names a copy by the type the model was sent, which is not
-// always the file's own: an animated GIF goes as the PNG of its first frame.
+// always the file's own: a GIF goes as the PNG of its first frame.
 var toolImageExt = map[string]string{
 	"image/png":  ".png",
 	"image/jpeg": ".jpg",
@@ -67,6 +71,12 @@ func SaveToolImageAsset(sessionDir, name, mimeType string, data []byte) (assetPa
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
 	if stem == "" {
 		stem = "image"
+	}
+	// The digest and the extension come on top of the name, and a file name
+	// is 255 bytes on most file systems.
+	for len(stem) > toolImageStemMax {
+		_, size := utf8.DecodeLastRuneInString(stem)
+		stem = stem[:len(stem)-size]
 	}
 	ext := toolImageExt[mimeType]
 	if ext == "" {

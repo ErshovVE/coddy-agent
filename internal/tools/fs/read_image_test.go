@@ -196,16 +196,47 @@ func TestReadShowsTheFirstFrameOfAnAnimatedGIF(t *testing.T) {
 	if len(*got) != 2 {
 		t.Fatalf("attached %d pictures, want 2", len(*got))
 	}
-	first := (*got)[0]
-	if first.mimeType != "image/png" {
-		t.Fatalf("an animated GIF went as %s, want image/png", first.mimeType)
+	for i, g := range *got {
+		if g.mimeType != "image/png" {
+			t.Fatalf("GIF %d went as %s, want the PNG of its first frame", i, g.mimeType)
+		}
+		img, err := png.Decode(bytes.NewReader(g.data))
+		if err != nil || img.Bounds().Dx() != 6 || img.Bounds().Dy() != 4 {
+			t.Fatalf("GIF %d decodes to %v (%v), want a 6x4 frame", i, img, err)
+		}
 	}
-	img, err := png.Decode(bytes.NewReader(first.data))
-	if err != nil || img.Bounds().Dx() != 6 || img.Bounds().Dy() != 4 {
-		t.Fatalf("first frame decodes to %v (%v), want 6x4", img, err)
+}
+
+// A GIF is read only as far as its first frame: the frames after it are never
+// decoded, so a small file of many large frames cannot fill the memory. The
+// proof is a GIF whose second frame is cut short, which decoding every frame
+// would refuse.
+func TestReadDecodesOnlyTheFirstFrameOfAGIF(t *testing.T) {
+	env, got := imageEnv(t)
+	frame := func(c uint8) *image.Paletted {
+		p := image.NewPaletted(image.Rect(0, 0, 6, 4), palette.Plan9)
+		for i := range p.Pix {
+			p.Pix[i] = c
+		}
+		return p
 	}
-	if still := (*got)[1]; still.mimeType != "image/gif" {
-		t.Errorf("a still GIF went as %s, want image/gif as it is", still.mimeType)
+	var one bytes.Buffer
+	if err := gif.EncodeAll(&one, &gif.GIF{Image: []*image.Paletted{frame(10)}, Delay: []int{5}}); err != nil {
+		t.Fatal(err)
+	}
+	// The one-frame file without its trailer, then the image descriptor of a
+	// second 6x4 frame and its LZW code size, and the file ends there.
+	cut := append([]byte(nil), one.Bytes()[:one.Len()-1]...)
+	cut = append(cut, 0x2C, 0, 0, 0, 0, 6, 0, 4, 0, 0x00, 0x08)
+	if _, err := gif.DecodeAll(bytes.NewReader(cut)); err == nil {
+		t.Fatal("the fixture decodes whole; it must not")
+	}
+	writeFile(t, env, "cut.gif", cut)
+	if _, err := runRead(env, `{"path":"cut.gif"}`); err != nil {
+		t.Fatalf("read of a GIF with a broken second frame: %v", err)
+	}
+	if len(*got) != 1 || (*got)[0].mimeType != "image/png" {
+		t.Fatalf("attached %+v, want the first frame as a PNG", *got)
 	}
 }
 

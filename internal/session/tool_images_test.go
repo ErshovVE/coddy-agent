@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func pngBytes(t *testing.T, w, h int, fill color.Color) []byte {
@@ -81,7 +82,7 @@ func bytesReader(t *testing.T, path string) *bytes.Reader {
 
 func TestSaveToolImageAssetNamesTheCopyByItsType(t *testing.T) {
 	dir := t.TempDir()
-	// An animated GIF reaches the model as the PNG of its first frame.
+	// A GIF reaches the model as the PNG of its first frame.
 	asset, _, err := SaveToolImageAsset(dir, "anim.gif", "image/png", pngBytes(t, 2, 2, color.Black))
 	if err != nil {
 		t.Fatal(err)
@@ -152,5 +153,20 @@ func TestToolImagesMetaKeepsWhatTheMetaAlreadyHolds(t *testing.T) {
 	}
 	if got := ToolImagesMeta(nil, nil); got != nil {
 		t.Errorf("no images still made meta %v", got)
+	}
+}
+
+// A file name may be as long as the file system allows; the copy adds a
+// digest and must still be one name the file system takes, and valid UTF-8.
+func TestSaveToolImageAssetKeepsALongNameWithinOneFileName(t *testing.T) {
+	dir := t.TempDir()
+	long := strings.Repeat("скриншот-", 25) + ".png" // 250 runes, over 400 bytes
+	asset, _, err := SaveToolImageAsset(dir, long, "image/png", pngBytes(t, 2, 2, color.Black))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(asset)
+	if len(name) > 120 || !utf8.ValidString(name) || !strings.HasPrefix(name, "скриншот-") || filepath.Ext(name) != ".png" {
+		t.Errorf("asset name %q (%d bytes), want at most 120 valid bytes keeping the start of the name", name, len(name))
 	}
 }

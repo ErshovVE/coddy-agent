@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	"image/draw"
 	"image/gif"
 	_ "image/jpeg" // image.DecodeConfig reads the size of a JPEG
 	"image/png"
@@ -62,19 +61,19 @@ func readImage(argPath, path string, data []byte, kind string, env *tooling.Env)
 
 	sent, sentType, note := data, kind, ""
 	if kind == "image/gif" {
-		// Not every provider takes an animated GIF; its first frame, as a
-		// PNG, is a picture they all do.
-		frame, animated, err := firstGIFFrame(data)
+		// Not every provider takes an animated GIF, and telling an animated one
+		// from a still one means decoding every frame, which a small file of
+		// many large frames turns into gigabytes. The first frame alone, as a
+		// PNG, is a picture every provider takes.
+		frame, err := gifFirstFrame(data)
 		if err != nil {
 			return "", fmt.Errorf("read: %s looks like a GIF image but cannot be decoded: %v", argPath, err)
 		}
-		if animated {
-			if len(frame) > readImageMaxBytes {
-				return "", fmt.Errorf("read: the first frame of %s is %s as a PNG, more than the %s one picture may take; save a scaled-down copy and read that",
-					argPath, formatBytes(len(frame)), formatBytes(readImageMaxBytes))
-			}
-			sent, sentType, note = frame, "image/png", "; it is animated, and you are shown its first frame"
+		if len(frame) > readImageMaxBytes {
+			return "", fmt.Errorf("read: the first frame of %s is %s as a PNG, more than the %s one picture may take; save a scaled-down copy and read that",
+				argPath, formatBytes(len(frame)), formatBytes(readImageMaxBytes))
 		}
+		sent, sentType, note = frame, "image/png", "; a GIF is shown to you as its first frame"
 	}
 	if err := env.AttachImage(filepath.Base(path), sentType, sent); err != nil {
 		return "", fmt.Errorf("read: %s: %w", argPath, err)
@@ -127,28 +126,19 @@ func webpSize(data []byte) (int, int, error) {
 	return 0, 0, fmt.Errorf("unknown WebP chunk %q", chunk)
 }
 
-// firstGIFFrame reports whether a GIF is animated and, when it is, returns
-// its first frame drawn on the full canvas as a PNG.
-func firstGIFFrame(data []byte) ([]byte, bool, error) {
-	g, err := gif.DecodeAll(bytes.NewReader(data))
+// gifFirstFrame returns the first frame of a GIF as a PNG. gif.Decode stops
+// after that frame, so the rest of an animation is never decoded, and the
+// frame keeps its palette: no canvas of the whole picture is allocated.
+func gifFirstFrame(data []byte) ([]byte, error) {
+	frame, err := gif.Decode(bytes.NewReader(data))
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if len(g.Image) < 2 {
-		return nil, false, nil
-	}
-	first := g.Image[0]
-	bounds := image.Rect(0, 0, g.Config.Width, g.Config.Height)
-	if bounds.Empty() {
-		bounds = first.Bounds()
-	}
-	canvas := image.NewNRGBA(bounds)
-	draw.Draw(canvas, first.Bounds(), first, first.Bounds().Min, draw.Over)
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, canvas); err != nil {
-		return nil, false, err
+	if err := png.Encode(&buf, frame); err != nil {
+		return nil, err
 	}
-	return buf.Bytes(), true, nil
+	return buf.Bytes(), nil
 }
 
 // formatBytes spells a file size the way a person reads it.
