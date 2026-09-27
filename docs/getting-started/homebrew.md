@@ -35,6 +35,10 @@ Every release publishes **`coddy.rb`** beside the archives, rendered with the ch
 macOS archives of that same tag. This installs and upgrades by hand: Homebrew cannot see new
 versions of a cask it did not get from a tap, so a new release means running the command again.
 
+The cask installs Coddy alone and recommends **`tmux`** in its caveats (**`brew install tmux`**).
+A cask's **`depends_on`** has no optional form, so declaring tmux there would install it for
+everyone, and Coddy runs without it; the deb and the rpm suggest it the same way.
+
 To let **`brew upgrade`** track releases before Coddy is in homebrew/core, put the same cask in a tap
 of ours (`brew tap coddy-project/coddy`). That is a repository of its own and is not set up yet; a
 tap is also the documented home for anything Homebrew's official repositories decline
@@ -56,6 +60,11 @@ dependency beside **`go`**: the embedded SPA is generated rather than committed,
 needs those files to exist before the binary that carries them is linked. It runs **`npm ci`**, not
 **`npm install`**, because [Acceptable Formulae](https://docs.brew.sh/Acceptable-Formulae#versioned-and-verifiable-sources)
 forbids resolving a moving dependency set during a build.
+
+The formula leaves **`tmux`** out. [Formula Cookbook](https://docs.brew.sh/Formula-Cookbook#specifying-other-formulae-as-dependencies)
+does not allow the optional and recommended dependencies of a formula in homebrew/core, and keeps
+caveats for what the Homebrew packaging itself changes, so the recommendation stays with the cask
+and the pages here.
 
 Its **`test do`** block runs **`coddy -v`**, **`coddy sessions list`** and **`coddy skills list`** -
 three commands that need no network and no configuration, and that fail if the binary cannot reach

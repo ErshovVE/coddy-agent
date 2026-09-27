@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/llm"
+	"github.com/EvilFreelancer/coddy-agent/internal/platform"
 	"github.com/EvilFreelancer/coddy-agent/internal/tooling"
 )
 
@@ -85,6 +86,7 @@ func executeGlob(ctx context.Context, argsJSON string, env *tooling.Env) (string
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
+		platform.AdaptCommand(cmd)
 		if err := cmd.Run(); err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				if exitErr.ExitCode() == 1 {

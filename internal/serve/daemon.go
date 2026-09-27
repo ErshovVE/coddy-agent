@@ -126,7 +126,7 @@ func StartDetached(opts DaemonOptions) (Record, error) {
 	if existing, err := ReadRecord(opts.Home); err == nil && existing.Running() {
 		return Record{}, &ErrAlreadyRunning{Record: existing}
 	}
-	exe, err := os.Executable()
+	exe, err := platform.Executable()
 	if err != nil {
 		return Record{}, fmt.Errorf("locate the coddy binary: %w", err)
 	}
@@ -146,6 +146,7 @@ func StartDetached(opts DaemonOptions) (Record, error) {
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	platform.DetachFromTerminal(cmd)
+	platform.AdaptCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		return Record{}, fmt.Errorf("start the dispatcher: %w", err)
 	}
@@ -279,7 +280,7 @@ func reapAbandonedWorker(home string, log *slog.Logger) {
 // disk, so a panic that escaped a surface, an OOM kill, or a `coddy update` that
 // replaced the executable are all recovered by the same mechanism.
 func runWorkerProcess(ctx context.Context, opts DaemonOptions, onStart func(pid int)) (int, error) {
-	exe, err := os.Executable()
+	exe, err := platform.Executable()
 	if err != nil {
 		return 1, fmt.Errorf("locate the coddy binary: %w", err)
 	}
@@ -292,6 +293,7 @@ func runWorkerProcess(ctx context.Context, opts DaemonOptions, onStart func(pid 
 	// Its own group, so stopping the worker reaches whatever it started - a
 	// background shell task, an MCP server - rather than orphaning it.
 	platform.DetachProcessGroup(cmd)
+	platform.AdaptCommand(cmd)
 	if err := cmd.Start(); err != nil {
 		return 1, fmt.Errorf("start the worker: %w", err)
 	}

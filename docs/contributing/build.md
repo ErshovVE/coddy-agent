@@ -67,7 +67,7 @@ Output: **`dist/coddy_<version>_linux_<arch>.deb`** and **`.rpm`**. Knobs:
 | Variable | Default | What |
 |----------|---------|------|
 | **`PKG_ARCHS`** | host **`GOARCH`** | architectures to package, e.g. **`"amd64 arm64"`** |
-| **`PKG_TAGS`** | **`http ui scheduler memory cli`** | build tags for the packaged binary |
+| **`PKG_TAGS`** | **`http ui scheduler memory cli gateway swarm`** | build tags for the packaged binary |
 | **`DIST_DIR`** | **`dist`** | where the packages land |
 
 ```bash
@@ -93,6 +93,13 @@ fails until **`packaging/systemd/coddy.service`** matches it byte for byte. The 
 packages** CI job then checks that both package formats carry that file and the maintainer
 scripts.
 
+The packages suggest **`tmux`** and require nothing. Coddy runs without it, and its console runs
+well inside it, where a session outlives a closed terminal or a dropped SSH connection. A
+suggestion is named and never installed - **`apt`** and **`zypper`** list it during the install,
+**`dnf`** keeps it in the metadata (**`rpm -q --suggests`**) - so the choice stays with the user.
+The **Distribution packages** CI job checks that the deb and the rpm suggest it and neither
+requires nor recommends it.
+
 Version strings are normalised for the two formats by **`scripts/package-version.sh`** - rpm forbids
 **`-`** in a version and dpkg reads the last one as the start of the Debian revision, so
 **`1.0.8-5-gb6b7d31-dirty`** is packaged as **`1.0.8+5.gb6b7d31.dirty`**, which both accept and both
@@ -117,7 +124,9 @@ brew install --cask dist/coddy.rb
 ```
 
 The cask links **`coddy`**, **`coddy.1`** and both completion scripts, which is why the release
-**`darwin`** and **`linux`** archives carry those files beside the binary. Each release publishes
+**`darwin`** and **`linux`** archives carry those files beside the binary. It recommends **`tmux`**
+in its **`caveats`** rather than declaring it: a cask's **`depends_on`** has no optional form, and
+Coddy runs without tmux, so the cask names it and installs nothing. Each release publishes
 **`coddy.rb`** as an asset, and **`brew install --cask <url>`** installs from it.
 
 ### Homebrew formula
@@ -159,6 +168,46 @@ make build
 ```
 
 Use this when you only need stdio ACP and want fewer dependencies and no **`npm`** step.
+
+## Android (Termux)
+
+```bash
+make android TAGS="http ui scheduler memory cli gateway swarm"   # build/coddy-android-arm64, -amd64
+make check-android                                              # go vet with GOOS=android, test files included
+```
+
+The Android build is the same sources with **`GOOS=android`** and cgo, linked by the Android NDK
+against Bionic for arm64 and x86_64: a position-independent executable that names
+**`/system/bin/linker64`** as its interpreter and needs only **`libc`**, **`libdl`** and
+**`liblog`**. That is the one shape Termux can start where it runs every program through Android's
+linker, which turns the static **`GOOS=linux`** binary away with **`has unexpected e_type: 2`**, and
+Bionic gives the binary what libc gives any program: its own arguments under the linker and
+Android's resolver. **`GOOS=android`** also keeps Go off the system calls Android's seccomp filter
+forbids. Go links android/amd64 only through a C toolchain anyway, and a build without cgo would
+ask **`127.0.0.1:53`** for every host, so **`internal/platform/android_nocgo.go`** stops it at
+compile time. What users see is on [Android (Termux)](../getting-started/android.md).
+
+**`scripts/android-cc.sh arm64|amd64`** prints the NDK clang both targets use, for API 24 (Android
+7.0, the oldest Termux runs on): it takes the NDK from **`ANDROID_NDK_HOME`**, **`ANDROID_NDK_ROOT`**
+or **`ANDROID_NDK`**, which the GitHub runners set, and otherwise the newest one under the SDK
+(**`sdkmanager "ndk;27.3.13750724"`** installs the version the runners carry).
+
+A binary built outside Termux carries none of the patches Termux applies to its own Go, so
+**`internal/platform`** makes the remaining adjustments at run time. **`android_init.go`** keeps the
+path of the binary when the linker started it, since **`/proc/self/exe`** names the linker then,
+and points **`SSL_CERT_FILE`** and **`TMPDIR`** at the Termux prefix; **`platform.AdaptCommand`**
+starts a child process the way **`termux-exec`** would, through the linker when Coddy itself came up
+that way, with **`/usr/bin/env`** and **`/bin/sh`** in a shebang taken from the prefix. Every place
+that builds an **`exec.Cmd`** calls **`AdaptCommand`** before **`Start`**, and
+**`TestEverySpawnSiteAdaptsTheCommand`** fails on one that does not.
+
+The decisions are plain functions in **`internal/platform/android.go`**, held on any Unix host by
+**`features/android_termux.feature`** and **`internal/platform/android_test.go`**. The files behind
+**`//go:build android`** are compiled only by **`make check-android`** and by the **Android
+cross-build** job of the pull request checks, which also builds both release binaries, checks that
+each is position-independent, names the Android linker and needs no library Android does not ship,
+and uploads them as the **`coddy-android-arm64`** and **`coddy-android-amd64`** artifacts to try on
+a device before the release.
 
 ## Version string (`LDFLAGS`, `print-version`)
 
@@ -236,6 +285,7 @@ On each SemVer git tag **`X.Y.Z`** that is on **`main`**, the [**Release binarie
 |---------|----------|
 | **`coddy_X.Y.Z_linux_amd64.tar.gz`** | Linux x86_64 |
 | **`coddy_X.Y.Z_linux_arm64.tar.gz`** | Linux arm64 |
+| **`coddy_X.Y.Z_android_arm64.tar.gz`**, **`coddy_X.Y.Z_android_amd64.tar.gz`** | Android arm64 and x86_64, under Termux (see [above](#android-termux)) |
 | **`coddy_X.Y.Z_windows_amd64.zip`** | Windows x86_64 (**`coddy.exe`**) |
 | **`coddy_X.Y.Z_darwin_amd64.tar.gz`** | macOS Intel |
 | **`coddy_X.Y.Z_darwin_arm64.tar.gz`** | macOS Apple Silicon |
@@ -248,7 +298,7 @@ The **`.tar.gz`** archives carry the man page and the shell completions beside t
 packages wrap the Linux binaries the same job just built rather than compiling their own, so the
 **`.deb`**, the **`.rpm`** and the **`.tar.gz`** of one tag hold byte-identical executables.
 
-Tags match the full feature set: **`http`**, **`ui`**, **`scheduler`**, **`memory`**. Manual run after a tag exists:
+Tags match the full feature set: **`http`**, **`ui`**, **`scheduler`**, **`memory`**, **`cli`**, **`gateway`**, **`swarm`**. Manual run after a tag exists:
 
 ```bash
 gh workflow run "Release binaries" --ref X.Y.Z -f tag=X.Y.Z

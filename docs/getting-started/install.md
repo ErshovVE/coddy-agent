@@ -16,6 +16,9 @@ curl -fsSL https://coddy.dev/install.sh | bash
 irm https://coddy.dev/install.ps1 | iex
 ```
 
+**Android (Termux)**: the same **`install.sh`** fetches the Android build; see
+[Android (Termux)](#android-termux).
+
 Creates **`~/.coddy/config.yaml`** from the release **`config.example.yaml`** when missing.
 
 On Linux and macOS the script installs more than the binary. The release archive carries the man
@@ -79,11 +82,16 @@ published, and **`SHA256SUMS`** beside them covers the packages too:
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
+The packages suggest **`tmux`** and do not install it. Coddy runs without it, and its console runs
+well inside it: a session there outlives a closed terminal or a dropped SSH connection. **`apt`**
+lists it under *Suggested packages*; add it with **`sudo apt-get install tmux`** or
+**`sudo dnf install tmux`**.
+
 ### What the package installs
 
 | Path | What |
 |------|------|
-| **`/usr/bin/coddy`** | The full binary (**`http`**, **`ui`**, **`scheduler`**, **`memory`**, **`cli`**) |
+| **`/usr/bin/coddy`** | The full binary (**`http`**, **`ui`**, **`scheduler`**, **`memory`**, **`cli`**, **`gateway`**, **`swarm`**) |
 | **`/usr/share/man/man1/coddy.1.gz`** | **`man coddy`** |
 | **`/usr/share/bash-completion/completions/coddy`** | bash completion |
 | **`/usr/share/zsh/site-functions/_coddy`** | zsh completion |
@@ -154,7 +162,9 @@ brew install --cask https://github.com/coddy-project/coddy-agent/releases/latest
 
 Every release publishes **`coddy.rb`** beside the archives, rendered with the checksums of the macOS
 archives of that same tag. The cask installs the same **`coddy`** binary the macOS archive carries,
-plus **`man coddy`** and the bash and zsh completions. Removal goes through Homebrew:
+plus **`man coddy`** and the bash and zsh completions. It does not install **`tmux`**: its caveats,
+printed after the install and by **`brew info --cask coddy`**, recommend **`brew install tmux`**
+for a console session that outlives the terminal. Removal goes through Homebrew:
 
 ```bash
 brew uninstall --cask coddy      # brew zap --cask coddy also removes ~/.coddy
@@ -175,6 +185,22 @@ privileged shortcut there.
 
 If macOS blocks the first run because the binary is not notarised, clear the quarantine flag:
 **`xattr -d com.apple.quarantine "$(which coddy)"`**.
+
+## Android (Termux)
+
+```bash
+pkg install curl
+curl -fsSL https://coddy.dev/install.sh | bash
+```
+
+In Termux the script fetches the build for Android, **`coddy_X.Y.Z_android_arm64.tar.gz`** on a
+64-bit ARM device and **`coddy_X.Y.Z_android_amd64.tar.gz`** on x86_64. The Linux archive does not
+start there: a Termux that targets Android 10 or later runs every
+program through Android's linker, which turns a static executable away with
+**`has unexpected e_type: 2`**. The rest of the install is the Linux one: **`~/.local/bin`**, the
+man page and the completions in **`~/.local/share`**, and the block in **`~/.bashrc`**. What differs
+on the device (the programs Coddy starts, certificates, running **`coddy serve`** in the background)
+is on its own page: [Android (Termux)](android.md).
 
 ## After install
 
