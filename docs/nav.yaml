@@ -195,6 +195,9 @@ groups:
       - path: tutorials/swarm-remote-nodes.md
         title: Working with remote nodes
         summary: Driving a node behind a relay from the console, an editor and the browser, what runs where, and which credential opens what.
+      - path: tutorials/swarm-android-nodes.md
+        title: Android phones as swarm nodes
+        summary: A phone running Coddy in Termux joins a relay on a laptop or a server and is driven from the relay's web UI and the console, with no open port on the phone.
   - id: contributing
     title: Contributing
     summary: How Coddy is built, tested, documented and released.
