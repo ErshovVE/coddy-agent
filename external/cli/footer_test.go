@@ -92,6 +92,24 @@ func TestFooterKeepsEveryNoteWhenTheLineIsNarrow(t *testing.T) {
 	}
 }
 
+// On a line with room for the notes and not for any of the path, the path
+// goes and the notes stay.
+func TestFooterDropsThePathBeforeANote(t *testing.T) {
+	f := newFooter(newTheme("dark"), "/home/operator/projects/coddy")
+	f.SetMCP(1, 3, true)
+	f.SetRunningTasks(2)
+	f.permission = "bypass"
+	line := tui.StripTerminalSequences(f.Render(48)[0])
+	for _, note := range []string{"MCP 1/3", "2 tasks running (/tasks)", "bypass"} {
+		if !strings.Contains(line, note) {
+			t.Fatalf("the note %q fell off the footer:\n%s", note, line)
+		}
+	}
+	if got := tui.VisibleWidth(line); got > 48 {
+		t.Fatalf("footer line is %d cells wide, want at most 48", got)
+	}
+}
+
 // A long working directory - a macOS temp folder, a deep monorepo path - must not push
 // the running tasks off the line: the path gives way, the count and the command that
 // lists the tasks stay.

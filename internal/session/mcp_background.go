@@ -47,20 +47,21 @@ type MCPServerConnect struct {
 type MCPConnectUpdate struct {
 	Servers []MCPServerConnect `json:"servers"`
 	Done    bool               `json:"done"`
-	// Generation is the dial the snapshot describes, one higher for every
-	// dial a session started and for every reload or teardown that ended
-	// one. A surface drops a snapshot older than the last it applied: the
-	// sender of a superseded dial may enqueue its snapshot after the
-	// replacement's, and the footer would otherwise show the old count.
+	// Generation orders the snapshots of a session: it grows with every
+	// change of the record - a server settling, the connect finishing, a
+	// reload cancelling it. A surface drops a snapshot older than the last
+	// it applied: two senders (the connect's notifier, the reload that
+	// supersedes it) can each read a snapshot and deliver it in the other
+	// order, and the footer would otherwise go back to counting.
 	Generation uint64 `json:"generation"`
 }
 
 // Counts reports how many servers are connected out of the ones that could
 // be: a server the trust gate holds is not counted, since nothing is dialing
-// it.
+// it, and neither is one whose dial was cancelled.
 func (u MCPConnectUpdate) Counts() (connected, total int) {
 	for _, s := range u.Servers {
-		if s.State == MCPConnectStateHeld {
+		if s.State == MCPConnectStateHeld || s.State == MCPConnectStateCancelled {
 			continue
 		}
 		total++
@@ -155,15 +156,10 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 	if !ok {
 		return
 	}
-	if len(targets) == 0 {
-		state.finishBackgroundMCP(gen, nil)
-		m.sendMCPConnectUpdate(state)
-		return
-	}
-	m.sendMCPConnectUpdate(state)
 	// One update in flight at a time, the newest state read when it is sent:
 	// a signal that finds one pending is dropped, and the pending one reads
-	// what is current by then.
+	// what is current by then. The first one says what is being dialed, so
+	// not even session/new waits for the surface.
 	notify := make(chan struct{}, 1)
 	go func() {
 		for range notify {
@@ -175,6 +171,13 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 		case notify <- struct{}{}:
 		default:
 		}
+	}
+	signal()
+	if len(targets) == 0 {
+		state.finishBackgroundMCP(gen, nil)
+		signal()
+		close(notify)
+		return
 	}
 	go func() {
 		defer close(notify)
@@ -201,22 +204,35 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 		})
 		// A switch or a trust change that landed while the servers were
 		// dialing is applied now: a server no longer enabled, or no longer
-		// admitted for the workspace, is not installed.
+		// admitted for the workspace, is not installed. One the gate could
+		// not decide on this time (an error reading its approvals) is not
+		// installed either - the gate fails closed - but is parked, so the
+		// next turn decides again instead of the server staying down.
 		admitted := make(map[string]bool, len(targets))
-		now, _ := m.configuredTargets(m.activeCfg(), state.GetCWD())
+		undecided := map[string]bool{}
+		now, nowHeld := m.configuredTargets(m.activeCfg(), state.GetCWD())
 		for _, t := range now {
 			admitted[t.Server.Config.Name] = true
+		}
+		for _, h := range nowHeld {
+			if h.Blocked == nil && h.Err != nil {
+				undecided[h.Server.Config.Name] = true
+			}
 		}
 		clients := make([]*mcp.Client, 0, len(results))
 		for i, r := range results {
 			if r.Err != nil || r.Client == nil {
 				continue
 			}
-			if !admitted[r.Target.Server.Config.Name] {
+			name := r.Target.Server.Config.Name
+			if !admitted[name] {
 				_ = r.Client.Close()
 				state.dropBackgroundMCPEntry(gen, i)
-				m.log.Info("MCP server not installed: switched off or no longer approved while it was connecting",
-					"server", r.Target.Server.Config.Name, "session", state.GetID())
+				if undecided[name] {
+					state.markMCPServerPending(name)
+				}
+				m.log.Info("MCP server not installed: switched off or not admitted any more while it was connecting",
+					"server", name, "session", state.GetID(), "retried_next_turn", undecided[name])
 				continue
 			}
 			clients = append(clients, r.Client)
@@ -229,12 +245,14 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 
 // supersedeBackgroundMCP ends a background connect still running for the
 // session before something else dials its configured servers - a settings
-// reload - and tells the surface, whose footer would otherwise count servers
-// that nobody dials any more.
+// reload - and tells the surface how the connect it was following ended,
+// whose footer would otherwise count servers nobody dials any more. It tells
+// it even when the connect had already finished: the reload clears the
+// record next (replaceConfiguredMCPClients), and the connect's own last
+// update may not have gone out by then.
 func (m *Manager) supersedeBackgroundMCP(st *State) {
-	if st.cancelBackgroundMCPConnect() {
-		m.sendMCPConnectUpdate(st)
-	}
+	st.cancelBackgroundMCPConnect()
+	m.sendMCPConnectUpdate(st)
 }
 
 // sendMCPConnectUpdate hands the current snapshot to the surface, if it

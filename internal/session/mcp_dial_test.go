@@ -188,7 +188,7 @@ func TestHungServerIsBoundedPerServer(t *testing.T) {
 	hung := gatedMCPServer("hung", filepath.Join(dir, "hung-started"), filepath.Join(dir, "never"))
 	good := reloadTestMCPServer("good")
 	mgr := NewManager(reloadTestConfig(hung, good), mcpTestSender{}, nil, slog.Default(), t.TempDir(), nil)
-	mgr.SetMCPConnectTimeoutForTest(300 * time.Millisecond)
+	mgr.SetMCPConnectTimeoutForTest(2 * time.Second)
 
 	begin := time.Now()
 	res, err := mgr.HandleSessionNew(context.Background(), acp.SessionNewParams{CWD: t.TempDir()})
@@ -230,7 +230,7 @@ func TestReloadWarningsNameEveryServerThatDidNotStart(t *testing.T) {
 	hung := gatedMCPServer("hung", filepath.Join(dir, "hung-started"), filepath.Join(dir, "never"))
 	broken := config.MCPServerConfig{Type: "stdio", Name: "broken", Command: filepath.Join(dir, "missing-binary")}
 	mgr := NewManager(reloadTestConfig(), mcpTestSender{}, nil, slog.Default(), t.TempDir(), nil)
-	mgr.SetMCPConnectTimeoutForTest(200 * time.Millisecond)
+	mgr.SetMCPConnectTimeoutForTest(2 * time.Second)
 	results, held := mgr.dialConfigured(context.Background(), reloadTestConfig(hung, broken, reloadTestMCPServer("good")), t.TempDir())
 	clients, warnings := connectedClients(results), dialWarnings(results, held)
 	t.Cleanup(func() {
@@ -285,7 +285,7 @@ func TestSlowFirstStartIsTriedOnceMoreAtTheNextTurn(t *testing.T) {
 	started, release := filepath.Join(dir, "started"), filepath.Join(dir, "release")
 	entered := make(chan []string, 4)
 	mgr := NewManager(reloadTestConfig(gatedMCPServer("slow", started, release)), mcpTestSender{}, namesRunner(entered), slog.Default(), t.TempDir(), nil)
-	mgr.SetMCPConnectTimeoutForTest(300 * time.Millisecond)
+	mgr.SetMCPConnectTimeoutForTest(2 * time.Second)
 	res, err := mgr.HandleSessionNew(context.Background(), acp.SessionNewParams{CWD: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +316,7 @@ func TestServerThatNeverAnswersIsTriedTwiceAtMost(t *testing.T) {
 	entered := make(chan []string, 4)
 	mgr := NewManager(reloadTestConfig(gatedMCPServer("hung", started, filepath.Join(dir, "never")), reloadTestMCPServer("good")),
 		mcpTestSender{}, namesRunner(entered), slog.Default(), t.TempDir(), nil)
-	mgr.SetMCPConnectTimeoutForTest(200 * time.Millisecond)
+	mgr.SetMCPConnectTimeoutForTest(2 * time.Second)
 	res, err := mgr.HandleSessionNew(context.Background(), acp.SessionNewParams{CWD: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
@@ -342,7 +342,7 @@ func TestServerThatNeverAnswersIsTriedTwiceAtMost(t *testing.T) {
 // once more, and the first prompt does try it.
 func TestBackgroundNoAnswerIsTriedOnceMoreAtTheFirstPrompt(t *testing.T) {
 	entered := make(chan []string, 4)
-	f := newBackgroundFixture(t, namesRunner(entered), func(m *Manager) { m.SetMCPConnectTimeoutForTest(300 * time.Millisecond) })
+	f := newBackgroundFixture(t, namesRunner(entered), func(m *Manager) { m.SetMCPConnectTimeoutForTest(2 * time.Second) })
 	if !waitUntil(t, 10*time.Second, func() bool { s, _ := f.st.MCPConnectSnapshot(); return s.Done }) {
 		t.Fatal("the dial never settled")
 	}

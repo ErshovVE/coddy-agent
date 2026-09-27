@@ -214,8 +214,14 @@ func (f *footer) Render(width int) []string {
 	if f.permission != "" && f.permission != "ask" {
 		perm = " • " + strings.ReplaceAll(f.permission, "_", " ")
 	}
-	if room := width - tui.VisibleWidth(notes) - tui.VisibleWidth(perm); room >= 8 && tui.VisibleWidth(line1) > room {
-		line1 = tui.TruncateToWidth(line1, room, "...")
+	if room := width - tui.VisibleWidth(notes) - tui.VisibleWidth(perm); tui.VisibleWidth(line1) > room {
+		// On a line too narrow for even a shortened path, the path goes and
+		// the notes stay.
+		if room >= 8 {
+			line1 = tui.TruncateToWidth(line1, room, "...")
+		} else if tui.VisibleWidth(notes)+tui.VisibleWidth(perm) <= width {
+			line1 = ""
+		}
 	}
 	line1 += notes
 

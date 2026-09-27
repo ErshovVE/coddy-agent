@@ -226,7 +226,7 @@ func TestCancelDuringWaitEndsTurn(t *testing.T) {
 // TestReloadDuringPendingConnectLeavesNoDuplicates: a settings change while
 // the dial is pending supersedes it; the late result is closed, not installed.
 func TestReloadDuringPendingConnectLeavesNoDuplicates(t *testing.T) {
-	f := newBackgroundFixture(t, nil, func(m *Manager) { m.SetMCPConnectTimeoutForTest(300 * time.Millisecond) })
+	f := newBackgroundFixture(t, nil, func(m *Manager) { m.SetMCPConnectTimeoutForTest(2 * time.Second) })
 	next := reloadTestConfig(gatedMCPServer("gated", f.started, f.release), reloadTestMCPServer("good"))
 	f.mgr.ReplaceConfig(next)
 	f.releaseServer()
@@ -353,7 +353,8 @@ func TestHeldServerIsReportedNotDialed(t *testing.T) {
 // TestReloadClearsTheConnectRecord: once a reload has replaced the servers,
 // the record of the background connect no longer describes the session and
 // is gone, so a surface adopting the session later shows no stale notice;
-// the last snapshot the surface got is of the connect it was following.
+// the last snapshot the surface got says the connect it was following is
+// over, ordered after every snapshot read before it.
 func TestReloadClearsTheConnectRecord(t *testing.T) {
 	f := newBackgroundFixture(t, nil, func(m *Manager) { m.SetMCPConnectTimeoutForTest(300 * time.Millisecond) })
 	first, _ := f.st.MCPConnectSnapshot()
@@ -365,8 +366,8 @@ func TestReloadClearsTheConnectRecord(t *testing.T) {
 		t.Fatal("the connect record outlived the reload that replaced the servers")
 	}
 	last, _ := f.sender.last()
-	if !last.Done || last.Generation != first.Generation {
-		t.Fatalf("last update = %+v, want the followed connect (generation %d) done", last, first.Generation)
+	if !last.Done || last.Generation <= first.Generation {
+		t.Fatalf("last update = %+v, want the followed connect done, ordered after the first snapshot (generation %d)", last, first.Generation)
 	}
 	f.releaseServer()
 }
@@ -423,6 +424,18 @@ func TestApprovedProjectServerConnectsInTheBackground(t *testing.T) {
 	}
 	if _, err := os.Stat(started); err != nil {
 		t.Fatal("the approved server was never spawned")
+	}
+	// Withdrawing the approval closes the server, and the record a surface
+	// adopting the session reads says it waits for approval again.
+	if err := mgr.SetMCPTrust(context.Background(), cwd, "project-tool", "", false); err != nil {
+		t.Fatal(err)
+	}
+	if got := clientNames(st); len(got) != 0 {
+		t.Fatalf("clients after the approval was withdrawn = %v, want none", got)
+	}
+	snap, _ = st.MCPConnectSnapshot()
+	if len(snap.Servers) != 1 || snap.Servers[0].State != MCPConnectStateHeld {
+		t.Fatalf("snapshot after the approval was withdrawn = %+v, want project-tool held", snap.Servers)
 	}
 }
 

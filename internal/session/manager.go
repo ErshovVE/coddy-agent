@@ -1871,7 +1871,8 @@ func (m *Manager) reconcileConfiguredMCPServer(ctx context.Context, st *State, g
 			break
 		}
 	}
-	wanted := want != nil && !want.Config.Disabled && gate.Evaluate(cwd, *want) == mcp.TrustStateAllowed
+	enabled := want != nil && !want.Config.Disabled
+	wanted := enabled && gate.Evaluate(cwd, *want) == mcp.TrustStateAllowed
 	declared, running := st.configuredMCPClientDeclared(name)
 	stale := running && wanted && declared != "" && declared != mcp.Fingerprint(want.Config)
 	if running && (!wanted || stale) {
@@ -1879,7 +1880,18 @@ func (m *Manager) reconcileConfiguredMCPServer(ctx context.Context, st *State, g
 		m.log.Info("closed MCP server", "name", name, "session", st.GetID(), "declaration_changed", stale)
 		running = false
 	}
-	if !wanted || running {
+	if !wanted {
+		// What the background connect recorded for the server is kept true:
+		// held by the gate, or not run at all any more.
+		if enabled {
+			st.updateBackgroundMCPEntry(MCPServerConnect{Name: name, State: MCPConnectStateHeld,
+				Hint: "approve it with: coddy mcp trust " + name})
+		} else {
+			st.updateBackgroundMCPEntry(MCPServerConnect{Name: name, State: MCPConnectStateCancelled})
+		}
+		return
+	}
+	if running {
 		return
 	}
 	if !dial {

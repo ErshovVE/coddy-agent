@@ -287,6 +287,20 @@ Confirmed and changed, each with a test where one could hold it:
   approval is a warning like the others; the npx scenario skips on a checkout
   without Node instead of failing.
 
+A second round on those fixes found one more thing all four answering
+reviewers agreed on: the connect's notifier and a reload that supersedes it
+send from two goroutines, so the last snapshot the console applied could be
+one read before the reload's. Every change of the record now bumps a
+revision the snapshot carries (`MCPConnectUpdate.Generation`), and the
+console drops a snapshot older than the last it applied; a reload always
+sends the record as it stands before clearing it, even when the connect had
+already finished, and the connect's first update goes through its notifier
+too, so not even `session/new` waits for the surface. The same round moved
+the record to held or cancelled when a switch or a withdrawn approval
+closes a server, parked (rather than dropped) a server the gate could not
+decide on after the dial, stopped counting cancelled servers, and let the
+footer drop the path entirely before it cuts into a note.
+
 Checked and left as they are: servers an ACP client sends keep the 20 s bound
 without a second try (documented; only that client can declare them again);
 a reload that supersedes the console's background connect clears the footer

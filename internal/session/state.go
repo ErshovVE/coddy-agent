@@ -128,6 +128,10 @@ type State struct {
 	mcpConnectDone     chan struct{}
 	mcpConnectCancel   context.CancelFunc
 	mcpClientsGen      uint64
+	// mcpConnectRev counts the changes of mcpConnect; every snapshot carries
+	// it (MCPConnectUpdate.Generation), so a surface can drop one that was
+	// read before a change it has already applied.
+	mcpConnectRev uint64
 
 	// pendingReadyNotify holds session updates that must not reach the client
 	// before the response carrying this session id is on the wire. Only
@@ -1950,7 +1954,8 @@ func (s *State) beginBackgroundMCP(servers []MCPServerConnect) (uint64, context.
 	s.cancelBackgroundMCPLocked()
 	s.mcpClientsGen++
 	ctx, cancel := context.WithCancel(context.Background())
-	s.mcpConnect = MCPConnectUpdate{Servers: append([]MCPServerConnect(nil), servers...), Generation: s.mcpClientsGen}
+	s.mcpConnect = MCPConnectUpdate{Servers: append([]MCPServerConnect(nil), servers...)}
+	s.touchMCPConnectLocked()
 	s.mcpConnectRecorded = true
 	s.mcpConnectDone = make(chan struct{})
 	s.mcpConnectCancel = cancel
@@ -1975,6 +1980,7 @@ func (s *State) settleBackgroundMCP(gen uint64, i int, entry MCPServerConnect, d
 		entry.Hint = mcpRetryHint
 	}
 	s.mcpConnect.Servers[i] = entry
+	s.touchMCPConnectLocked()
 	return true, retry, gaveUp
 }
 
@@ -1988,6 +1994,7 @@ func (s *State) dropBackgroundMCPEntry(gen uint64, i int) {
 		return
 	}
 	s.mcpConnect.Servers[i] = MCPServerConnect{Name: s.mcpConnect.Servers[i].Name, State: MCPConnectStateCancelled}
+	s.touchMCPConnectLocked()
 }
 
 // finishBackgroundMCP installs the clients the dial of generation gen
@@ -2005,6 +2012,7 @@ func (s *State) finishBackgroundMCP(gen uint64, clients []*mcp.Client) bool {
 	}
 	s.configuredMCPClients = append(s.configuredMCPClients, clients...)
 	s.mcpConnect.Done = true
+	s.touchMCPConnectLocked()
 	done, cancel := s.mcpConnectDone, s.mcpConnectCancel
 	s.mcpConnectDone, s.mcpConnectCancel = nil, nil
 	s.mu.Unlock()
@@ -2040,6 +2048,7 @@ func (s *State) cancelBackgroundMCPLocked() bool {
 			}
 		}
 		s.mcpConnect.Done = true
+		s.touchMCPConnectLocked()
 	}
 	s.mcpClientsGen++
 	return running
@@ -2067,9 +2076,17 @@ func (s *State) updateBackgroundMCPEntry(entry MCPServerConnect) {
 	for i := range s.mcpConnect.Servers {
 		if s.mcpConnect.Servers[i].Name == entry.Name {
 			s.mcpConnect.Servers[i] = entry
+			s.touchMCPConnectLocked()
 			return
 		}
 	}
+}
+
+// touchMCPConnectLocked stamps a change of the connect record with the next
+// revision. The caller holds s.mu.
+func (s *State) touchMCPConnectLocked() {
+	s.mcpConnectRev++
+	s.mcpConnect.Generation = s.mcpConnectRev
 }
 
 // backgroundMCPRunning reports whether a background dial of the configured
