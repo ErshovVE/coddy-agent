@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -626,8 +627,10 @@ func describesTheClient(name string) bool {
 		"Cache-Control", "Pragma", "Dnt", "Referer", "Origin", "Upgrade-Insecure-Requests":
 		return true
 	}
-	// The client hints and fetch metadata a browser adds: Sec-Ch-Ua, Sec-Fetch-Mode.
-	return strings.HasPrefix(name, "Sec-")
+	// The client hints and the fetch metadata a browser adds (Sec-Ch-Ua-Platform,
+	// Sec-Fetch-Mode) and its privacy signal. Not every Sec- name: Sec-Token is
+	// a name like any other.
+	return strings.HasPrefix(name, "Sec-Ch-Ua") || strings.HasPrefix(name, "Sec-Fetch-") || name == "Sec-Gpc"
 }
 
 // notForEveryRequest are the headers a default for every request cannot
@@ -651,21 +654,32 @@ var notForEveryRequest = map[string]bool{
 	"Proxy-Authorization": true,
 }
 
+// defaultHeaderName is the shape of a default header's name, the one the loader
+// holds tools.http_request.default_headers to: letters, digits, "-" and "_",
+// starting with a letter.
+var defaultHeaderName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
+
 // applyDefaultHeaders adds the operator's default headers for the names the
 // call did not give, marking them given so the tool's own defaults stay out.
-// An empty value leaves the header out, as it does in a call.
+// An empty value leaves the header out, as it does in a call. The names are
+// checked by the loader's rules again: this is where they meet the wire.
 func (r *HTTPRequest) applyDefaultHeaders(defaults map[string]string, given map[string]bool, removed *[]string) error {
 	names := make([]string, 0, len(defaults))
 	for name := range defaults {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	spelled := make(map[string]string, len(names))
 	for _, rawName := range names {
 		name := strings.TrimSpace(rawName)
-		if !httpguts.ValidHeaderFieldName(name) {
-			return fmt.Errorf("default header %q is not a valid header name", rawName)
+		if !defaultHeaderName.MatchString(name) {
+			return fmt.Errorf("default header %q is not a header name the configuration takes", rawName)
 		}
 		key := textproto.CanonicalMIMEHeaderKey(name)
+		if first, dup := spelled[key]; dup {
+			return fmt.Errorf("default headers %q and %q name the same header", first, rawName)
+		}
+		spelled[key] = rawName
 		if notForEveryRequest[key] {
 			return fmt.Errorf("default header %s cannot be set for every request", key)
 		}

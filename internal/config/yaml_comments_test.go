@@ -715,3 +715,48 @@ tools:
 		t.Errorf("a save that edited a header removed since wrote %v, want %v:\n%s", got, want, edited)
 	}
 }
+
+// The same merge holds when a map empties or appears on one side: a form that
+// removed the last header it was served keeps a header written on disk since,
+// and a form that adds the first header of a map keeps one written on disk since.
+func TestSettingsSaveMergesHeadersAcrossAnEmptyMap(t *testing.T) {
+	headersOf := func(saved string) map[string]string {
+		t.Helper()
+		var doc struct {
+			Tools struct {
+				HTTPRequest struct {
+					DefaultHeaders map[string]string `yaml:"default_headers"`
+				} `yaml:"http_request"`
+			} `yaml:"tools"`
+		}
+		if err := yaml.Unmarshal([]byte(saved), &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc.Tools.HTTPRequest.DefaultHeaders
+	}
+	const modeline = "# yaml-language-server: $schema=https://coddy.dev/config.schema.json\n"
+
+	live, raw := settingsSaveFixture(t, modeline+"tools:\n  http_request:\n    default_headers:\n      X-Old: gone-soon\n")
+	onDisk := strings.Replace(raw, "      X-Old: gone-soon\n", "      X-Old: gone-soon\n      X-New: added\n", 1)
+	if err := os.WriteFile(live.Paths.ConfigPath, []byte(onDisk), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	emptied := saveFromSettings(t, live, func(doc map[string]any) {
+		object(t, object(t, doc, "tools"), "http_request")["default_headers"] = map[string]any{}
+	})
+	if got, want := headersOf(emptied), map[string]string{"X-New": "added"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("a form that removed its last header wrote %v, want %v:\n%s", got, want, emptied)
+	}
+
+	live, raw = settingsSaveFixture(t, modeline+"agent:\n  max_turns: 40\n")
+	onDisk = raw + "tools:\n  http_request:\n    default_headers:\n      X-Disk: added\n"
+	if err := os.WriteFile(live.Paths.ConfigPath, []byte(onDisk), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first := saveFromSettings(t, live, func(doc map[string]any) {
+		object(t, object(t, doc, "tools"), "http_request")["default_headers"] = map[string]any{"X-Form": "added"}
+	})
+	if got, want := headersOf(first), map[string]string{"X-Disk": "added", "X-Form": "added"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("a form that added the first header wrote %v, want %v:\n%s", got, want, first)
+	}
+}

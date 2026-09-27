@@ -259,6 +259,9 @@ func applyUCICommand(root *yaml.Node, cmd UCICommand) error {
 	if len(tokens) == 0 {
 		return fmt.Errorf("config root cannot be edited; address a specific path")
 	}
+	if err := refuseRedactedSelector(tokens); err != nil {
+		return fmt.Errorf("%s: %w", cmd.RedactedString(), err)
+	}
 	switch cmd.Op {
 	case UCIOpSet:
 		target, err := configSchemaType(tokens)
@@ -356,6 +359,21 @@ func refuseRedactedPlaceholder(node *yaml.Node, path []string) error {
 	case yaml.ScalarNode:
 		if node.Value == redactedConfigValue && configSecretPath(path) {
 			return fmt.Errorf("%s is what config_get shows in place of a secret, not its value: stage the real value, or leave the key out of the command", redactedConfigValue)
+		}
+	}
+	return nil
+}
+
+// refuseRedactedSelector refuses a selector that matches a secret field on the
+// placeholder config_get shows for it (providers[api_key=<redacted>]): a set
+// writes the selector's value into the entry it creates.
+func refuseRedactedSelector(tokens []configPathToken) error {
+	for i, token := range tokens {
+		if token.selector == nil || token.selector.value != redactedConfigValue {
+			continue
+		}
+		if configSecretPath(append(configPathKeys(tokens[:i+1]), token.selector.field)) {
+			return fmt.Errorf("%s is what config_get shows in place of a secret, not its value: select the entry by another field", redactedConfigValue)
 		}
 	}
 	return nil

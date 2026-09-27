@@ -682,6 +682,7 @@ func TestCommitRefusesTheRedactedPlaceholderForASecret(t *testing.T) {
 		"set tools.http_request.default_headers.Authorization=<redacted>",
 		`set tools.http_request.default_headers={"Authorization":"<redacted>","Accept":"application/json"}`,
 		"set tools.websearch.brave_api_key=<redacted>",
+		`set providers[api_key=<redacted>]={"name":"demo","type":"openai"}`,
 	} {
 		_, err := CommitUCICommands(paths, mustParseUCI(t, line))
 		if err == nil || !strings.Contains(err.Error(), "<redacted>") {

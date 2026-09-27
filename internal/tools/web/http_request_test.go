@@ -864,7 +864,7 @@ func TestHTTPRequestDescribeKeepsAConfiguredCredentialOutOfThePrompt(t *testing.
 	// of a header that describes the client and of no other.
 	defaults := map[string]string{
 		"Authorization": "Bearer t0p-secret", "X-Api-Key": "k3y", "X-Auth": "s3ss", "Authentication": "Bearer 0ther",
-		"User-Agent": browserUA, "Accept-Language": "en-US", "Sec-Ch-Ua-Platform": `"Linux"`,
+		"Sec-Token": "s3c", "User-Agent": browserUA, "Accept-Language": "en-US", "Sec-Ch-Ua-Platform": `"Linux"`,
 	}
 	req, err := ParseHTTPRequestInEnv(`{"url":"https://api.example.com/items"}`, &tooling.Env{CWD: t.TempDir(), HTTPDefaultHeaders: defaults})
 	if err != nil {
@@ -876,16 +876,17 @@ func TestHTTPRequestDescribeKeepsAConfiguredCredentialOutOfThePrompt(t *testing.
 		"Authentication: <redacted>",
 		"X-Api-Key: <redacted>",
 		"X-Auth: <redacted>",
+		"Sec-Token: <redacted>",
 		"User-Agent: " + browserUA,
 		"Accept-Language: en-US",
 		`Sec-Ch-Ua-Platform: "Linux"`,
-		"Headers from tools.http_request.default_headers: Accept-Language, Authentication, Authorization, Sec-Ch-Ua-Platform, User-Agent, X-Api-Key, X-Auth",
+		"Headers from tools.http_request.default_headers: Accept-Language, Authentication, Authorization, Sec-Ch-Ua-Platform, Sec-Token, User-Agent, X-Api-Key, X-Auth",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("description does not show %q:\n%s", want, text)
 		}
 	}
-	for _, secret := range []string{"t0p-secret", "k3y", "s3ss", "0ther"} {
+	for _, secret := range []string{"t0p-secret", "k3y", "s3ss", "0ther", "s3c"} {
 		if strings.Contains(text, secret) {
 			t.Errorf("the prompt shows the configured credential %q:\n%s", secret, text)
 		}
@@ -908,14 +909,17 @@ func TestHTTPRequestDescribeKeepsAConfiguredCredentialOutOfThePrompt(t *testing.
 // request can carry, each in its own package: whatever the loader accepts the
 // tool sends, and whatever it refuses the tool refuses too.
 func TestDefaultHeaderRulesMatchTheLoader(t *testing.T) {
-	for _, name := range []string{
-		"User-Agent", "Accept", "Accept-Language", "Authorization", "Cookie", "X-Client", "Cache-Control",
-		"Host", "content-type", "Content-Length", "Transfer-Encoding", "Proxy-Authorization", "Connection", "Te",
+	for _, headers := range []map[string]string{
+		{"User-Agent": "v"}, {"Accept": "v"}, {"Accept-Language": "v"}, {"Authorization": "v"}, {"Cookie": "v"},
+		{"X-Client": "v"}, {"Cache-Control": "v"}, {"Host": "v"}, {"content-type": "v"}, {"Content-Length": "v"},
+		{"Transfer-Encoding": "v"}, {"Proxy-Authorization": "v"}, {"Connection": "v"}, {"Te": "v"},
+		{"Keep-Alive": "v"}, {"Proxy-Connection": "v"}, {"Trailer": "v"}, {"Upgrade": "v"},
+		{"123": "v"}, {"X.Trace": "v"}, {"_X": "v"}, {"User-Agent": "a", "user-agent": "b"},
 	} {
-		loaderErr := (&config.Tools{HTTPRequest: config.ToolHTTPRequest{DefaultHeaders: map[string]string{name: "v"}}}).Validate()
-		_, toolErr := ParseHTTPRequestInEnv(`{"url":"https://example.com"}`, &tooling.Env{HTTPDefaultHeaders: map[string]string{name: "v"}})
+		loaderErr := (&config.Tools{HTTPRequest: config.ToolHTTPRequest{DefaultHeaders: headers}}).Validate()
+		_, toolErr := ParseHTTPRequestInEnv(`{"url":"https://example.com"}`, &tooling.Env{HTTPDefaultHeaders: headers})
 		if (loaderErr == nil) != (toolErr == nil) {
-			t.Errorf("%s: the loader says %v, the tool says %v", name, loaderErr, toolErr)
+			t.Errorf("%v: the loader says %v, the tool says %v", headers, loaderErr, toolErr)
 		}
 	}
 }
