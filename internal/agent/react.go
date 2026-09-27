@@ -60,6 +60,8 @@ type SessionState interface {
 	PendingPlanContext() string
 	ClearPendingPlanContext()
 	TakePendingImageParts() []llm.ImagePart
+	AppendToolImageParts(parts []llm.ImagePart)
+	TakeToolImageParts() []llm.ImagePart
 	GetPermissionMode() string
 	// The settings the running turn works with (session/settings_state.go):
 	// its own when a --once / --count override, a skill or the model's
@@ -372,6 +374,7 @@ func (a *Agent) Run(ctx context.Context, prompt []acp.ContentBlock) (string, err
 		BackgroundEnabled: a.cfg.Tools.Background.ResolvedEnabled(),
 		WebSearch:         webSearchSettings(a.cfg),
 		PreviewServer:     previewServerSettings(a.cfg),
+		QueueImageParts:   a.queueToolImages,
 	}
 	httpRequestEnv(toolEnv, a.cfg)
 	// The model's own model switch; a subagent runs on what its parent chose.
@@ -672,6 +675,10 @@ func (a *Agent) runReActLoop(
 	activeSkills []*skills.Skill,
 	maxTurns int,
 ) (string, error) {
+	// Images a batch queued are delivered once the batch has its results; a
+	// turn that ends before that (cancelled, stopped by a hook or the loop
+	// guard) drops them rather than leaving them for a later step.
+	defer a.state.TakeToolImageParts()
 	var totalInputTokens, totalOutputTokens int
 	var turnIndex int
 	var lastStatsWrite time.Time
@@ -1442,6 +1449,13 @@ func (a *Agent) runReActLoop(
 				return string(acp.StopReasonRefused), fmt.Errorf("stopped by hook: %s", reason)
 			}
 		}
+		// Images a tool queued (view_image) go out as one synthetic user
+		// message after the whole batch: a role:"tool" message cannot carry
+		// image content in the OpenAI-compatible schema, and a user message
+		// between the batch's tool results would break the required
+		// assistant(tool_calls) -> tool results adjacency.
+		a.deliverQueuedImages(&messages)
+
 		// The model folded its own history: the transcript the loop replays is
 		// shorter now, so the outgoing slice is rebuilt from it before the next
 		// call, the way an automatic compaction between steps rebuilds it. Done
@@ -2051,6 +2065,16 @@ func (a *Agent) currentToolDefinitions(mode string) []llm.ToolDefinition {
 		}
 		available = filtered
 	}
+	if !a.modelReadsImages() {
+		// view_image would only queue pictures the model cannot read.
+		filtered := make([]llm.ToolDefinition, 0, len(available))
+		for _, definition := range available {
+			if definition.Name != "view_image" {
+				filtered = append(filtered, definition)
+			}
+		}
+		available = filtered
+	}
 	defs := FilterToolDefinitions(available, toolSet)
 	if toolSet.Unrestricted() || mode == "plan" {
 		defs = append(defs, mcpToolDefinitions(a.state.GetMCPClients(), a.state.GetMCPToolFilter())...)
@@ -2525,7 +2549,7 @@ func isASCIILetter(c byte) bool {
 // toolKind maps a tool name to an ACP tool call kind.
 func toolKind(name string) string {
 	switch name {
-	case "read", "keep_result", "glob", "grep", "websearch", "webfetch", "config_get", "config_changes", "coddy_docs_search", "coddy_docs_read":
+	case "read", "view_image", "keep_result", "glob", "grep", "websearch", "webfetch", "config_get", "config_changes", "coddy_docs_search", "coddy_docs_read":
 		return "read"
 	case "write", "edit", "apply_patch", "mkdir", "rmdir", "touch", "rm", "mv", "config_commit", "config_rollback":
 		return "write"
@@ -2606,4 +2630,49 @@ func filePathsNote(parts []llm.ImagePart) string {
 	}
 	b.WriteString("</coddy_session_assets>")
 	return b.String()
+}
+
+// modelReadsImages reports whether the session's current model is configured
+// to accept images (models[].multimodal). Missing and unknown entries fail
+// closed, the rule the HTTP surface applies to prompt attachments.
+func (a *Agent) modelReadsImages() bool {
+	entry := a.cfg.FindModelEntry(a.state.EffectiveModelID(a.cfg))
+	return entry != nil && entry.Multimodal
+}
+
+// queueToolImages is the Env.QueueImageParts hook. The model is checked at
+// call time as well as when the tool list is built: switch_model can change
+// it mid-turn, and a call can be replayed from history.
+func (a *Agent) queueToolImages(parts []llm.ImagePart) error {
+	if !a.modelReadsImages() {
+		return fmt.Errorf("the current model %s does not read images (models[].multimodal is not set)", a.state.EffectiveModelID(a.cfg))
+	}
+	a.state.AppendToolImageParts(parts)
+	return nil
+}
+
+// deliverQueuedImages drains the images tools queued through
+// Env.QueueImageParts during the current tool batch and appends them as a
+// synthetic user message to both messages (when non-nil) and the session
+// transcript. Called only once every tool call of the batch has its result.
+func (a *Agent) deliverQueuedImages(messages *[]llm.Message) {
+	queued := a.state.TakeToolImageParts()
+	if len(queued) == 0 {
+		return
+	}
+	names := make([]string, 0, len(queued))
+	for _, p := range queued {
+		names = append(names, p.Name)
+	}
+	msg := llm.Message{
+		Role:       llm.RoleUser,
+		Content:    "[Image(s) requested via view_image are attached: " + strings.Join(names, ", ") + "]",
+		ImageParts: queued,
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+	}
+	if messages != nil {
+		*messages = append(*messages, msg)
+	}
+	a.state.AddMessage(msg)
+	a.refreshConversationContextUsage(true)
 }

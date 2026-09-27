@@ -90,6 +90,9 @@ func (a *Agent) ResumeAfterPermission(ctx context.Context, toolCallID string, pe
 	callRules := a.toolCallRules(mode, tc, toolEnv.CWD)
 	result, execErr := a.executeToolCall(ctx, tc, toolEnv, mode, a.state.GetID(), !askAgain)
 	a.state.AddMessage(toolResultMessage(tc, result, execErr, callRules))
+	// continueReAct rebuilds its messages from the transcript, so the
+	// images the approved call queued only need to land there.
+	a.deliverQueuedImages(nil)
 	return a.continueReAct(ctx, mode, toolEnv)
 }
 
@@ -173,6 +176,7 @@ func (a *Agent) buildToolEnv(mode, sessionDir string) *tools.Env {
 		Background:        a.backgroundPool(sessionDir),
 		BackgroundEnabled: a.cfg.Tools.Background.ResolvedEnabled(),
 		WebSearch:         webSearchSettings(a.cfg),
+		QueueImageParts:   a.queueToolImages,
 	}
 	httpRequestEnv(env, a.cfg)
 	a.applySubagentEnv(env, mode)

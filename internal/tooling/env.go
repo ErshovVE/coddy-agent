@@ -6,6 +6,7 @@ import (
 
 	"github.com/EvilFreelancer/coddy-agent/internal/acp"
 	"github.com/EvilFreelancer/coddy-agent/internal/bgtask"
+	"github.com/EvilFreelancer/coddy-agent/internal/llm"
 	"github.com/EvilFreelancer/coddy-agent/internal/plans"
 )
 
@@ -148,6 +149,16 @@ type Env struct {
 	// reload reaches the next search without rebuilding the tool set. Nil
 	// means the built-in defaults.
 	WebSearch *WebSearchSettings
+
+	// QueueImageParts queues image parts to be delivered to the model as a
+	// synthetic user message once the current tool batch has its results --
+	// tool results (role "tool") cannot carry image content per the
+	// OpenAI-compatible chat completions schema, only "user"/"assistant"
+	// messages can, so a tool that wants the model to actually see a
+	// picture (view_image) queues it here instead of returning it directly.
+	// It refuses when the session's current model does not read images
+	// (models[].multimodal). Nil where no session backs the run.
+	QueueImageParts func(parts []llm.ImagePart) error
 
 	// PreviewServer is the resolved tools.preview_server section the
 	// preview_server tool reads its bind host from. Like WebSearch it travels

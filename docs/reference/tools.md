@@ -18,6 +18,7 @@ The Permission column uses the classes the gate in `internal/agent/react.go` app
 | Tool | Purpose | Arguments (short) | Permission | Modes |
 |---|---|---|---|---|
 | `read` | Read a file as text with an optional 1-based line range, or list a directory; text in another encoding (UTF-16, a legacy code page) is converted to UTF-8, a binary file (an image, a PDF, an archive) is refused with its type and size | `path`, `offset`, `limit`, `recursive`, `show_hidden`, `keep` | none | agent, plan, ask |
+| `view_image` | Show an image file (PNG, JPEG, GIF, WebP) to the model as a picture, which `read` refuses; the images a batch of tool calls queued reach the model as one user message after the batch's tool results, since a tool result cannot carry an image in the OpenAI-compatible schema, and a turn that ends before the batch does drops them. Offered only when the session's model has `models[].multimodal: true` ([Configuration](config.md)); a call made after a switch to a model without it is refused | `path` | none | agent |
 | `keep_result` | Mark a page already read or a grep result as useful so result eviction keeps it ([Context compaction](../features/compaction.md#result-eviction)) | `path`, `offset`, `limit`, `pattern` | none | agent, plan, ask |
 | `glob` | Find files by glob pattern, newest first, at most 100 paths | `pattern`, `path` | none | agent, plan, ask |
 | `grep` | Regular-expression search over file contents | `pattern`, `path`, `glob`, `case_sensitive`, `max_results`, `keep` | none | agent, plan, ask |
