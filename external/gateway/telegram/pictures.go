@@ -3,6 +3,8 @@
 package telegram
 
 import (
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,6 +70,16 @@ func (s *Sender) sendPictures(sessionID string, images []session.ToolImage) {
 			posted = true
 			continue
 		}
+		// Only Telegram refusing the photo itself (its size, its shape) is
+		// worth another try as a document; a rate limit or a failure on the way
+		// would only double the traffic. The library leaves the code of an
+		// upload's error at zero, so the Bot API's own "Bad Request" wording
+		// tells a refusal apart.
+		var apiErr *tgbotapi.Error
+		if !errors.As(err, &apiErr) || (apiErr.Code != http.StatusBadRequest && !strings.HasPrefix(apiErr.Message, "Bad Request")) {
+			s.log.Warn("telegram: send picture", "name", name, "err", err)
+			continue
+		}
 		s.log.Debug("telegram: picture refused as a photo, sending it as a document", "name", name, "err", err)
 		doc := tgbotapi.NewDocument(s.chatID, file)
 		doc.Caption = name
@@ -82,28 +94,27 @@ func (s *Sender) sendPictures(sessionID string, images []session.ToolImage) {
 // moveLiveBelow keeps the answer under the pictures it follows. Without Rich
 // Messages the answer grows in one live message sent before the call ran, and
 // its final edit would leave the finished answer above the photos. So the
-// live message is taken off the chat once a picture is posted: the text
-// streamed so far is still in the answer, which comes as a new message below,
-// again a reply to the person's message. Rich Messages need nothing: a draft
-// is not a message, and the answer is sent at the end.
+// live message is dropped once a picture is posted: the text streamed so far
+// is still in the answer, which comes as a new message below, again a reply
+// to the person's message. The old message is deleted when Telegram lets it
+// be; when it does not (too old, already gone) the answer still moves below.
+// Rich Messages need nothing: a draft is not a message, and the answer is
+// sent at the end.
 func (s *Sender) moveLiveBelow() {
 	if s.rich.enabled {
 		return
 	}
 	s.mu.Lock()
 	liveID := s.liveID
+	if liveID != 0 {
+		s.liveID = 0
+		s.replyTo = s.askedID
+	}
 	s.mu.Unlock()
 	if liveID == 0 {
 		return
 	}
 	if _, err := s.bot.Request(tgbotapi.NewDeleteMessage(s.chatID, liveID)); err != nil {
-		s.log.Debug("telegram: move the live message below a picture", "err", err)
-		return
+		s.log.Debug("telegram: delete the live message above a picture", "err", err)
 	}
-	s.mu.Lock()
-	if s.liveID == liveID {
-		s.liveID = 0
-		s.replyTo = s.askedID
-	}
-	s.mu.Unlock()
 }

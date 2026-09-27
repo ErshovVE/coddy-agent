@@ -771,10 +771,14 @@ photo, captioned with the file's name, as soon as the `read` finishes
 ([Images](../features/images.md)). The person sees what the agent looked at
 before the answer comes, in private chats and groups alike. The photo is the
 copy Coddy kept with the session, so it is the picture the model was shown
-even when the workspace file changed since.
+even when the workspace file changed since. Without Rich Messages the live
+message the answer grows in was sent before the call ran, so the bot drops
+it once a photo is posted and the answer comes below the photo as a new
+reply to the question; the old message is deleted when Telegram allows it.
 
-A picture Telegram will not take as a photo - a side too long, a shape too
-narrow - goes as a document instead. Only the chat's own session sends
+A picture Telegram refuses as a photo - a side too long, a shape too narrow -
+goes as a document instead; a rate limit or a failure on the way is not
+retried as a document. Only the chat's own session sends
 pictures: what a subagent reads stays in its session, and the web UI shows it
 there. A model without `multimodal` is refused the picture, so nothing is sent
 and the `read` reports why.

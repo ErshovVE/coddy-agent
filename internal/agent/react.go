@@ -920,7 +920,7 @@ func (a *Agent) runReActLoop(
 		// the transcript, and later appends stay intact. The rules a tool call
 		// brought in are joined to its result only here, so an evicted result
 		// keeps them and every request replays them byte for byte.
-		sendMessages := withTurnContext(withToolImages(withToolRules(a.prunedForLLM(messages)), a.modelReadsImages()), turnCtx)
+		sendMessages := withTurnContext(withToolImages(withToolRules(a.prunedForLLM(messages)), a.modelReadsImages(), a.loadToolImage), turnCtx)
 		// The call's own clock: when it went out, when the first chunk came
 		// back and how many followed. It names the silence in the errors
 		// below and is the debug-level account of every call.

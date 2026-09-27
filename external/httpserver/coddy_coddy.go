@@ -1178,6 +1178,9 @@ func llmMsgsToCoddyOpenAIForSession(sessionID, assetsDir string, msgs []llm.Mess
 }
 
 func imagePartMIMEType(part llm.ImagePart) string {
+	if part.MIMEType != "" {
+		return part.MIMEType
+	}
 	if strings.HasPrefix(part.DataURL, "data:") {
 		end := strings.IndexAny(part.DataURL[5:], ";,")
 		if end >= 0 {

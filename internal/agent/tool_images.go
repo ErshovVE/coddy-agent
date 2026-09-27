@@ -3,6 +3,9 @@ package agent
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -41,10 +44,7 @@ func (a *Agent) attachToolImage(name, mimeType string, data []byte) error {
 		return fmt.Errorf("the session's model %s does not read images (models[].multimodal is not set), so the picture cannot be shown to it",
 			a.state.EffectiveModelID(a.cfg))
 	}
-	part := llm.ImagePart{
-		DataURL: "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data),
-		Name:    name,
-	}
+	part := llm.ImagePart{Name: name, MIMEType: mimeType, Size: len(data)}
 	if sd := strings.TrimSpace(a.state.GetPersistedSessionDir()); sd != "" {
 		asset, thumb, err := session.SaveToolImageAsset(sd, name, mimeType, data)
 		if err != nil {
@@ -52,8 +52,55 @@ func (a *Agent) attachToolImage(name, mimeType string, data []byte) error {
 		}
 		part.FilePath, part.ThumbnailPath = asset, thumb
 	}
+	if part.FilePath == "" {
+		// Nothing to build the picture from later: it rides inline.
+		part.DataURL = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
+	}
 	a.callImages = append(a.callImages, part)
 	return nil
+}
+
+// loadToolImage is the data URL of a picture kept as its asset: the copy with
+// this session's assets under the part's file name (a bundle that moved still
+// has it), else the path the part recorded. The copy is read-only and named
+// by its content, so every request builds the same bytes.
+func (a *Agent) loadToolImage(p llm.ImagePart) (string, error) {
+	path := p.FilePath
+	if sd := strings.TrimSpace(a.state.GetPersistedSessionDir()); sd != "" && path != "" {
+		local := filepath.Join(session.AssetsPath(sd), filepath.Base(path))
+		if info, err := os.Lstat(local); err == nil && info.Mode().IsRegular() {
+			path = local
+		}
+	}
+	if path == "" {
+		return "", fmt.Errorf("the picture %s has no saved copy", p.Name)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, toolImagesMaxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > toolImagesMaxBytes {
+		return "", fmt.Errorf("the saved copy of %s is larger than a request may carry", p.Name)
+	}
+	mimeType := p.MIMEType
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data), nil
+}
+
+// partBytes is what a picture adds to a request: its data URL, or the one its
+// file will make.
+func partBytes(p llm.ImagePart) int {
+	if p.DataURL != "" {
+		return len(p.DataURL)
+	}
+	return len("data:"+p.MIMEType+";base64,") + base64.StdEncoding.EncodedLen(p.Size)
 }
 
 // callResultMessage is toolResultMessage for the call that just returned,
@@ -79,9 +126,13 @@ func toolImagesForSurfaces(sessionID string, parts []llm.ImagePart) []session.To
 			continue
 		}
 		asset := filepath.Base(p.FilePath)
+		mimeType := p.MIMEType
+		if mimeType == "" {
+			mimeType = dataURLType(p.DataURL)
+		}
 		img := session.ToolImage{
 			Name:     p.Name,
-			MIMEType: dataURLType(p.DataURL),
+			MIMEType: mimeType,
 			Asset:    asset,
 			URL:      session.AssetRoute(sessionID, asset),
 		}
@@ -120,16 +171,17 @@ const (
 // results. A tool message cannot hold an image in the OpenAI-compatible
 // schema, and a user message between the results of one step would break the
 // assistant(tool_calls) -> tool results adjacency strict endpoints require.
-// Only the newest pictures within toolImagesMaxCount and toolImagesMaxBytes
-// go out; the step of an older one names it as left out. Built from the
+// Only the newest pictures within toolImagesMaxCount and toolImagesMaxBytes,
+// counted with the attachments, go out; the step of an older one names it as
+// left out. Built from the
 // history alone, the projection is the same bytes on every request, so the
 // provider's prompt cache holds until a new picture pushes an old one out.
 //
 // A model that does not read images - the session switched to one after the
 // read - is sent no picture at all, its prompt attachments included, and is
-// told which pictures the results returned without them. The input is never
-// written.
-func withToolImages(msgs []llm.Message, readsImages bool) []llm.Message {
+// told which pictures the results and the prompts came with. The input is
+// never written.
+func withToolImages(msgs []llm.Message, readsImages bool, load func(llm.ImagePart) (string, error)) []llm.Message {
 	needed := false
 	for _, m := range msgs {
 		if len(m.ImageParts) > 0 && (m.Role == llm.RoleTool || !readsImages) {
@@ -143,18 +195,19 @@ func withToolImages(msgs []llm.Message, readsImages bool) []llm.Message {
 	kept := newestToolImages(msgs, readsImages)
 	out := make([]llm.Message, 0, len(msgs)+2)
 	var pending []llm.ImagePart
-	var names, omitted []string
+	var names, omitted, missing []string
 	flush := func() {
-		if len(names) == 0 && len(omitted) == 0 {
+		if len(names) == 0 && len(omitted) == 0 && len(missing) == 0 {
 			return
 		}
-		out = append(out, toolImagesMessage(pending, names, omitted, readsImages))
-		pending, names, omitted = nil, nil, nil
+		out = append(out, toolImagesMessage(pending, names, omitted, missing, readsImages))
+		pending, names, omitted, missing = nil, nil, nil, nil
 	}
 	for i, m := range msgs {
 		if m.Role != llm.RoleTool {
 			flush()
-			if !readsImages {
+			if !readsImages && len(m.ImageParts) > 0 {
+				m.Content = withAttachmentsLeftOut(m.Content, m.ImageParts)
 				m.ImageParts = nil
 			}
 			out = append(out, m)
@@ -162,12 +215,20 @@ func withToolImages(msgs []llm.Message, readsImages bool) []llm.Message {
 		}
 		for j, p := range m.ImageParts {
 			ref := fmt.Sprintf("%s (from call %s)", p.Name, m.ToolCallID)
-			if kept[[2]int{i, j}] {
-				pending = append(pending, p)
-				names = append(names, ref)
-			} else {
+			if !kept[[2]int{i, j}] {
 				omitted = append(omitted, ref)
+				continue
 			}
+			if p.DataURL == "" {
+				url, err := load(p)
+				if err != nil {
+					missing = append(missing, ref)
+					continue
+				}
+				p.DataURL = url
+			}
+			pending = append(pending, p)
+			names = append(names, ref)
 		}
 		m.ImageParts = nil
 		out = append(out, m)
@@ -177,8 +238,10 @@ func withToolImages(msgs []llm.Message, readsImages bool) []llm.Message {
 }
 
 // newestToolImages picks the pictures of the tool results a request carries,
-// keyed by message and part index: from the newest back, until
-// toolImagesMaxCount pictures or toolImagesMaxBytes of data are taken. None
+// keyed by message and part index. The pictures people attached go out
+// whatever the budget, so they count first; tool pictures take what is left,
+// from the newest back, until toolImagesMaxCount pictures are taken, a picture
+// that does not fit the bytes left giving way to an older one that does. None
 // for a model that does not read images.
 func newestToolImages(msgs []llm.Message, readsImages bool) map[[2]int]bool {
 	kept := map[[2]int]bool{}
@@ -186,15 +249,24 @@ func newestToolImages(msgs []llm.Message, readsImages bool) map[[2]int]bool {
 		return kept
 	}
 	count, size := 0, 0
-	for i := len(msgs) - 1; i >= 0; i-- {
+	for _, m := range msgs {
+		if m.Role == llm.RoleTool {
+			continue
+		}
+		for _, p := range m.ImageParts {
+			count++
+			size += partBytes(p)
+		}
+	}
+	for i := len(msgs) - 1; i >= 0 && count < toolImagesMaxCount; i-- {
 		if msgs[i].Role != llm.RoleTool {
 			continue
 		}
 		parts := msgs[i].ImageParts
-		for j := len(parts) - 1; j >= 0; j-- {
-			n := len(parts[j].DataURL)
-			if count >= toolImagesMaxCount || size+n > toolImagesMaxBytes {
-				return kept
+		for j := len(parts) - 1; j >= 0 && count < toolImagesMaxCount; j-- {
+			n := partBytes(parts[j])
+			if size+n > toolImagesMaxBytes {
+				continue
 			}
 			count++
 			size += n
@@ -204,10 +276,25 @@ func newestToolImages(msgs []llm.Message, readsImages bool) map[[2]int]bool {
 	return kept
 }
 
+// withAttachmentsLeftOut tells a model that cannot take pictures which ones
+// the message came with, so it does not answer as if the prompt were text
+// alone.
+func withAttachmentsLeftOut(content string, parts []llm.ImagePart) string {
+	names := make([]string, 0, len(parts))
+	for _, p := range parts {
+		name := p.Name
+		if name == "" {
+			name = filepath.Base(p.FilePath)
+		}
+		names = append(names, name)
+	}
+	return strings.TrimRight(content, "\n") + "\n\n[This message came with pictures the current model cannot be shown: " + strings.Join(names, ", ") + ".]"
+}
+
 // toolImagesMessage is the user message that carries the pictures of one
 // step to the provider and names the ones left out of the request, or tells a
 // model that cannot take pictures what it is not shown.
-func toolImagesMessage(parts []llm.ImagePart, names, omitted []string, readsImages bool) llm.Message {
+func toolImagesMessage(parts []llm.ImagePart, names, omitted, missing []string, readsImages bool) llm.Message {
 	if !readsImages {
 		return llm.Message{
 			Role: llm.RoleUser,
@@ -228,5 +315,35 @@ func toolImagesMessage(parts []llm.ImagePart, names, omitted []string, readsImag
 		b.WriteString(strings.Join(omitted, ", "))
 		b.WriteString(".")
 	}
+	if len(missing) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("Pictures the tool calls above returned whose saved copy is gone; read the file again to see one: ")
+		b.WriteString(strings.Join(missing, ", "))
+		b.WriteString(".")
+	}
 	return llm.Message{Role: llm.RoleUser, Content: b.String(), ImageParts: parts}
+}
+
+// imageTokensEach is what one picture counts for in the context estimate:
+// about what a provider charges for a screenshot-sized image (the Anthropic
+// API: the pixels over 750, about 1.2 megapixels once it resizes a picture).
+const imageTokensEach = 1600
+
+// conversationTokens estimates the conversation as the provider reads it: its
+// text, and the pictures a request carries, which the text leaves out - every
+// attachment, and the tool pictures that fit toolImagesMaxCount beside them.
+// Result eviction, automatic compaction and the context ring measure with it.
+func conversationTokens(msgs []llm.Message) int {
+	attached, fromTools := 0, 0
+	for _, m := range msgs {
+		if m.Role == llm.RoleTool {
+			fromTools += len(m.ImageParts)
+		} else {
+			attached += len(m.ImageParts)
+		}
+	}
+	fromTools = min(fromTools, max(0, toolImagesMaxCount-attached))
+	return session.EstimateTokens(conversationText(msgs)) + (attached+fromTools)*imageTokensEach
 }

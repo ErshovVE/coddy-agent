@@ -9,6 +9,8 @@ import (
 	"image/gif"
 	_ "image/jpeg" // image.DecodeConfig reads the size of a JPEG
 	"image/png"
+	"io"
+	"os"
 	"path/filepath"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/tooling"
@@ -47,10 +49,15 @@ func readImage(argPath, path string, data []byte, kind string, env *tooling.Env)
 	}
 	format := readImageFormats[kind]
 	if len(data) > readImageMaxBytes {
-		return "", fmt.Errorf("read: %s is a %s image of %s, more than the %s one picture may take; save a scaled-down copy and read that",
-			argPath, format, formatBytes(len(data)), formatBytes(readImageMaxBytes))
+		return "", oversizedImage(argPath, kind, int64(len(data)), env)
 	}
 	w, h, err := imageSize(data, kind)
+	if err == nil {
+		err = imageComplete(data, kind)
+	}
+	if errors.Is(err, errImageCut) || errors.Is(err, errWebPNoImage) || errors.Is(err, errWebPAnimated) {
+		return "", fmt.Errorf("read: %s %w", argPath, err)
+	}
 	if err != nil {
 		return "", fmt.Errorf("read: %s looks like a %s image but cannot be decoded: %v", argPath, format, err)
 	}
@@ -82,11 +89,43 @@ func readImage(argPath, path string, data []byte, kind string, env *tooling.Env)
 		argPath, format, w, h, formatBytes(len(data)), note), nil
 }
 
+// oversizedImage is the refusal of a picture larger than readImageMaxBytes,
+// or the old binary refusal where no agent takes pictures at all.
+func oversizedImage(argPath, kind string, size int64, env *tooling.Env) error {
+	if env == nil || env.AttachImage == nil {
+		return fmt.Errorf("read: %s %w (%s, %d bytes); read shows text files only", argPath, errBinaryFile, kind, size)
+	}
+	return fmt.Errorf("read: %s is a %s image of %s, more than the %s one picture may take; save a scaled-down copy and read that",
+		argPath, readImageFormats[kind], formatBytes(int(size)), formatBytes(readImageMaxBytes))
+}
+
+// sniffFileHead is sniffKind over the first bytes of a file, all the content
+// sniffer looks at.
+func sniffFileHead(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(f, head)
+	return sniffKind(head[:n])
+}
+
+// A picture that is not all there - a screenshot still being written, a
+// download cut short - would go into the history and fail every later request
+// of the session, so its structure is walked to the end before it is taken.
+var (
+	errImageCut     = errors.New("ends before its image does: the file may still be written, read it again once it is complete")
+	errWebPNoImage  = errors.New("is a WebP file with no image data")
+	errWebPAnimated = errors.New("is an animated WebP, which not every provider takes; save a frame of it as a PNG and read that")
+)
+
 // imageSize reads a picture's width and height from its header, without
 // decoding its pixels.
 func imageSize(data []byte, kind string) (int, int, error) {
 	if kind == "image/webp" {
-		return webpSize(data)
+		return webpInfo(data)
 	}
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
@@ -95,35 +134,129 @@ func imageSize(data []byte, kind string) (int, int, error) {
 	return cfg.Width, cfg.Height, nil
 }
 
-// webpSize reads a WebP's canvas size from its first chunk, which the
-// standard library has no decoder for: an extended file (VP8X) states it
-// outright, a lossy one (VP8) in its key frame header, a lossless one (VP8L)
-// in its first bits.
-func webpSize(data []byte) (int, int, error) {
-	if len(data) < 30 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
+// imageComplete walks a PNG to its IEND chunk and a JPEG to its end-of-image
+// marker; webpInfo walks a WebP, and a GIF goes as its first frame, which
+// decodes whole or not at all.
+func imageComplete(data []byte, kind string) error {
+	switch kind {
+	case "image/png":
+		return pngComplete(data)
+	case "image/jpeg":
+		return jpegComplete(data)
+	}
+	return nil
+}
+
+// pngComplete follows the chunks after the signature to IEND.
+func pngComplete(data []byte) error {
+	for off := 8; off+8 <= len(data); {
+		n := int(binary.BigEndian.Uint32(data[off : off+4]))
+		end := off + 12 + n
+		if n < 0 || end > len(data) {
+			return errImageCut
+		}
+		if string(data[off+4:off+8]) == "IEND" {
+			return nil
+		}
+		off = end
+	}
+	return errImageCut
+}
+
+// jpegComplete follows the markers after SOI to EOI, skipping each segment by
+// its length and the entropy-coded data after a start of scan up to the next
+// marker. What follows EOI - a camera's trailer - does not matter.
+func jpegComplete(data []byte) error {
+	for i := 2; i+1 < len(data); {
+		if data[i] != 0xFF {
+			return errImageCut
+		}
+		m := data[i+1]
+		switch {
+		case m == 0xFF: // fill byte
+			i++
+			continue
+		case m == 0xD9: // EOI
+			return nil
+		case m == 0x01 || (m >= 0xD0 && m <= 0xD7): // TEM, RSTn: no length
+			i += 2
+			continue
+		}
+		if i+4 > len(data) {
+			return errImageCut
+		}
+		i += 2 + (int(data[i+2])<<8 | int(data[i+3]))
+		if m != 0xDA { // not SOS
+			continue
+		}
+		for i+1 < len(data) && (data[i] != 0xFF || data[i+1] == 0x00 || (data[i+1] >= 0xD0 && data[i+1] <= 0xD7)) {
+			i++
+		}
+	}
+	return errImageCut
+}
+
+// webpInfo walks the chunks of a WebP, which the standard library has no
+// decoder for: it reads the canvas size (from VP8X, else from the VP8 or VP8L
+// image chunk), requires that image chunk to be there, and refuses an
+// animation and a chunk that runs past the end of the file.
+func webpInfo(data []byte) (int, int, error) {
+	if len(data) < 12 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
 		return 0, 0, errors.New("no WebP header")
 	}
-	chunk, body := string(data[12:16]), data[20:]
-	switch chunk {
-	case "VP8X":
-		w := 1 + (int(body[4]) | int(body[5])<<8 | int(body[6])<<16)
-		h := 1 + (int(body[7]) | int(body[8])<<8 | int(body[9])<<16)
-		return w, h, nil
-	case "VP8 ":
-		if body[3] != 0x9d || body[4] != 0x01 || body[5] != 0x2a {
-			return 0, 0, errors.New("no VP8 key frame")
-		}
-		w := int(binary.LittleEndian.Uint16(body[6:8]) & 0x3fff)
-		h := int(binary.LittleEndian.Uint16(body[8:10]) & 0x3fff)
-		return w, h, nil
-	case "VP8L":
-		if body[0] != 0x2f {
-			return 0, 0, errors.New("no VP8L signature")
-		}
-		bits := binary.LittleEndian.Uint32(body[1:5])
-		return int(bits&0x3fff) + 1, int(bits>>14&0x3fff) + 1, nil
+	riff := int(binary.LittleEndian.Uint32(data[4:8]))
+	if riff < 4 || riff > len(data)-8 {
+		return 0, 0, errImageCut
 	}
-	return 0, 0, fmt.Errorf("unknown WebP chunk %q", chunk)
+	data = data[:8+riff]
+	w, h, hasImage := 0, 0, false
+	for off := 12; off < len(data); {
+		if off+8 > len(data) {
+			return 0, 0, errImageCut
+		}
+		size := int(binary.LittleEndian.Uint32(data[off+4 : off+8]))
+		body := off + 8
+		if size < 0 || size > len(data)-body {
+			return 0, 0, errImageCut
+		}
+		payload := data[body : body+size]
+		switch string(data[off : off+4]) {
+		case "VP8X":
+			if len(payload) < 10 {
+				return 0, 0, errors.New("a VP8X chunk too short")
+			}
+			if payload[0]&0x02 != 0 {
+				return 0, 0, errWebPAnimated
+			}
+			w = 1 + (int(payload[4]) | int(payload[5])<<8 | int(payload[6])<<16)
+			h = 1 + (int(payload[7]) | int(payload[8])<<8 | int(payload[9])<<16)
+		case "ANIM", "ANMF":
+			return 0, 0, errWebPAnimated
+		case "VP8 ":
+			if len(payload) < 10 || payload[3] != 0x9d || payload[4] != 0x01 || payload[5] != 0x2a {
+				return 0, 0, errors.New("no VP8 key frame")
+			}
+			if w == 0 {
+				w = int(binary.LittleEndian.Uint16(payload[6:8]) & 0x3fff)
+				h = int(binary.LittleEndian.Uint16(payload[8:10]) & 0x3fff)
+			}
+			hasImage = true
+		case "VP8L":
+			if len(payload) < 5 || payload[0] != 0x2f {
+				return 0, 0, errors.New("no VP8L signature")
+			}
+			if w == 0 {
+				bits := binary.LittleEndian.Uint32(payload[1:5])
+				w, h = int(bits&0x3fff)+1, int(bits>>14&0x3fff)+1
+			}
+			hasImage = true
+		}
+		off = body + size + size%2
+	}
+	if !hasImage {
+		return 0, 0, errWebPNoImage
+	}
+	return w, h, nil
 }
 
 // gifFirstFrame returns the first frame of a GIF as a PNG. gif.Decode stops

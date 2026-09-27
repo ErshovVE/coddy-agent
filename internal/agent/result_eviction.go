@@ -17,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/llm"
-	"github.com/EvilFreelancer/coddy-agent/internal/session"
 	"github.com/EvilFreelancer/coddy-agent/internal/tools"
 )
 
@@ -86,7 +85,7 @@ func (a *Agent) evictionDue(msgs []llm.Message) bool {
 			overhead = b.EstimatedTotal - b.Conversation
 		}
 	}
-	total := overhead + session.EstimateTokens(conversationText(msgs))
+	total := overhead + conversationTokens(msgs)
 	return total*100 >= start*ent.MaxContextTokens
 }
 
@@ -244,7 +243,7 @@ func pruneToolResults(history []llm.Message, opt resultEvictionOptions) []llm.Me
 func resultBytes(m llm.Message) int {
 	n := len(m.Content)
 	for _, p := range m.ImageParts {
-		n += len(p.DataURL)
+		n += partBytes(p)
 	}
 	return n
 }

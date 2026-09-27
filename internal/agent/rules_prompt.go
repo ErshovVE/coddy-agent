@@ -76,7 +76,7 @@ func computeContextBreakdown(
 	rulesTok := session.EstimateTokens(rulesMD)
 	skillsTok := session.EstimateTokens(skillsMD)
 	mcpTok := estimateMCPTokens(toolDefs)
-	convTok := session.EstimateTokens(conversationText(messages))
+	convTok := conversationTokens(messages)
 	fullTok := session.EstimateTokens(fullSystem)
 	sysTok := fullTok - toolsTok - rulesTok - skillsTok
 	if sysTok < 0 {

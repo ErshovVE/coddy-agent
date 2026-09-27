@@ -2,7 +2,9 @@ package session
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
@@ -168,5 +170,38 @@ func TestSaveToolImageAssetKeepsALongNameWithinOneFileName(t *testing.T) {
 	name := filepath.Base(asset)
 	if len(name) > 120 || !utf8.ValidString(name) || !strings.HasPrefix(name, "скриншот-") || filepath.Ext(name) != ".png" {
 		t.Errorf("asset name %q (%d bytes), want at most 120 valid bytes keeping the start of the name", name, len(name))
+	}
+}
+
+// pngHeaderOnly is a PNG signature and an IHDR chunk stating w x h: enough for
+// image.DecodeConfig, nothing to decode.
+func pngHeaderOnly(w, h int) []byte {
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:4], uint32(w))
+	binary.BigEndian.PutUint32(ihdr[4:8], uint32(h))
+	ihdr[8], ihdr[9] = 8, 6 // 8-bit RGBA
+	var buf bytes.Buffer
+	buf.WriteString("\x89PNG\r\n\x1a\n")
+	_ = binary.Write(&buf, binary.BigEndian, uint32(len(ihdr)))
+	buf.WriteString("IHDR")
+	buf.Write(ihdr)
+	_ = binary.Write(&buf, binary.BigEndian, crc32.ChecksumIEEE(append([]byte("IHDR"), ihdr...)))
+	return buf.Bytes()
+}
+
+// A thumbnail decodes the whole picture, and a read may bring many large
+// ones: past toolImageThumbnailMaxPixels the copy gets no thumbnail (the web
+// UI previews the original) rather than a decode of hundreds of megabytes.
+func TestSaveToolImageAssetMakesNoThumbnailOfAHugePicture(t *testing.T) {
+	dir := t.TempDir()
+	asset, thumb, err := SaveToolImageAsset(dir, "big.png", "image/png", pngHeaderOnly(5000, 4000))
+	if err != nil || asset == "" {
+		t.Fatalf("asset %q, %v", asset, err)
+	}
+	if thumb != "" {
+		t.Errorf("a 20-megapixel picture got a thumbnail %q", thumb)
+	}
+	if toolImageThumbnailMaxPixels >= assetThumbnailMaxPixels {
+		t.Errorf("the tool picture cap %d is not below the attachment cap %d", toolImageThumbnailMaxPixels, assetThumbnailMaxPixels)
 	}
 }

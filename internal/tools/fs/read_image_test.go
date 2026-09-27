@@ -13,6 +13,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -240,25 +241,57 @@ func TestReadDecodesOnlyTheFirstFrameOfAGIF(t *testing.T) {
 	}
 }
 
-// webpVP8X is the smallest WebP header the size reader understands: RIFF,
-// WEBP and an extended-format chunk carrying the canvas size.
-func webpVP8X(w, h int) []byte {
-	chunk := make([]byte, 10)
-	put24 := func(b []byte, v int) { b[0], b[1], b[2] = byte(v), byte(v>>8), byte(v>>16) }
-	put24(chunk[4:7], w-1)
-	put24(chunk[7:10], h-1)
+// webpChunk is one RIFF chunk: its name, its size and its payload, padded to
+// an even length.
+func webpChunk(name string, payload []byte) []byte {
+	var buf bytes.Buffer
+	buf.WriteString(name)
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(payload)))
+	buf.Write(payload)
+	if len(payload)%2 == 1 {
+		buf.WriteByte(0)
+	}
+	return buf.Bytes()
+}
+
+// webpFile wraps chunks in the RIFF header of a WebP file.
+func webpFile(chunks ...[]byte) []byte {
+	body := []byte("WEBP")
+	for _, c := range chunks {
+		body = append(body, c...)
+	}
 	var buf bytes.Buffer
 	buf.WriteString("RIFF")
-	_ = binary.Write(&buf, binary.LittleEndian, uint32(4+8+len(chunk)))
-	buf.WriteString("WEBPVP8X")
-	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(chunk)))
-	buf.Write(chunk)
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(body)))
+	buf.Write(body)
 	return buf.Bytes()
+}
+
+// vp8lChunk is a lossless image chunk whose header states w x h; the
+// bitstream after it is not decoded by read, only its presence is checked.
+func vp8lChunk(w, h int) []byte {
+	bits := uint32(w-1) | uint32(h-1)<<14
+	payload := []byte{0x2f, byte(bits), byte(bits >> 8), byte(bits >> 16), byte(bits >> 24), 0, 0, 0}
+	return webpChunk("VP8L", payload)
+}
+
+// vp8xChunk is the extended header chunk stating the canvas w x h, animated
+// when asked.
+func vp8xChunk(w, h int, animated bool) []byte {
+	payload := make([]byte, 10)
+	if animated {
+		payload[0] = 0x02
+	}
+	put24 := func(b []byte, v int) { b[0], b[1], b[2] = byte(v), byte(v>>8), byte(v>>16) }
+	put24(payload[4:7], w-1)
+	put24(payload[7:10], h-1)
+	return webpChunk("VP8X", payload)
 }
 
 func TestReadHandsTheModelAWebPWithItsSize(t *testing.T) {
 	env, got := imageEnv(t)
-	writeFile(t, env, "pic.webp", webpVP8X(640, 480))
+	writeFile(t, env, "pic.webp", webpFile(vp8lChunk(640, 480)))
+	writeFile(t, env, "ext.webp", webpFile(vp8xChunk(320, 200, false), vp8lChunk(320, 200)))
 	out, err := runRead(env, `{"path":"pic.webp"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -266,12 +299,60 @@ func TestReadHandsTheModelAWebPWithItsSize(t *testing.T) {
 	if !strings.Contains(out, "WebP image") || !strings.Contains(out, "640x480") {
 		t.Errorf("result %q does not name the WebP and its size", out)
 	}
-	if len(*got) != 1 || (*got)[0].mimeType != "image/webp" {
-		t.Fatalf("attached %+v, want one image/webp", *got)
+	if out, err := runRead(env, `{"path":"ext.webp"}`); err != nil || !strings.Contains(out, "320x200") {
+		t.Fatalf("an extended WebP: %q, %v", out, err)
 	}
-	writeFile(t, env, "wide.webp", webpVP8X(9000, 10))
+	if len(*got) != 2 || (*got)[0].mimeType != "image/webp" {
+		t.Fatalf("attached %+v, want two image/webp", *got)
+	}
+	writeFile(t, env, "wide.webp", webpFile(vp8lChunk(9000, 10)))
 	if _, err := runRead(env, `{"path":"wide.webp"}`); err == nil || !strings.Contains(err.Error(), "9000x10") {
 		t.Errorf("a WebP over the side limit: err = %v", err)
+	}
+}
+
+// A picture that is not all there - a screenshot still being written, a
+// download cut short - would go into the history and fail every later
+// request, so read refuses a PNG with no IEND, a JPEG with no end of image,
+// a WebP whose chunks run past the file or that carries no image data, and
+// an animated WebP, which not every provider takes.
+func TestReadRefusesAPictureThatIsNotAllThere(t *testing.T) {
+	env, got := imageEnv(t)
+	pngData := encodePNG(t, 40, 30)
+	writeFile(t, env, "cut.png", pngData[:len(pngData)-20])
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, solidImage(64, 48), nil); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, env, "cut.jpg", jpg.Bytes()[:jpg.Len()-40])
+	whole := webpFile(vp8lChunk(64, 48))
+	writeFile(t, env, "cut.webp", whole[:len(whole)-4])
+	writeFile(t, env, "empty.webp", webpFile(vp8xChunk(64, 48, false)))
+	writeFile(t, env, "anim.webp", webpFile(vp8xChunk(64, 48, true), webpChunk("ANIM", make([]byte, 6))))
+
+	for name, want := range map[string]string{
+		"cut.png":    "ends before its image does",
+		"cut.jpg":    "ends before its image does",
+		"cut.webp":   "ends before its image does",
+		"empty.webp": "no image data",
+		"anim.webp":  "animated",
+	} {
+		_, err := runRead(env, `{"path":"`+name+`"}`)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", name, err, want)
+		}
+	}
+	if len(*got) != 0 {
+		t.Errorf("attached %d incomplete pictures", len(*got))
+	}
+
+	// The whole files pass, trailing bytes after a JPEG's end included.
+	writeFile(t, env, "whole.jpg", append(append([]byte(nil), jpg.Bytes()...), "trailer"...))
+	writeFile(t, env, "whole.png", pngData)
+	for _, name := range []string{"whole.jpg", "whole.png"} {
+		if _, err := runRead(env, `{"path":"`+name+`"}`); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }
 
@@ -288,5 +369,39 @@ func TestReadDescriptionTellsTheModelAboutPictures(t *testing.T) {
 		if n == "view_image" {
 			t.Error("view_image is still a built-in: read shows pictures")
 		}
+	}
+}
+
+// A picture over the limit is refused by its size on disk, before read loads
+// it: the file is sparse here, 64 MB that were never written, and reading it
+// whole would allocate all of it.
+func TestReadRefusesAnOversizedPictureWithoutLoadingIt(t *testing.T) {
+	env, got := imageEnv(t)
+	path := filepath.Join(env.CWD, "huge.png")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(encodePNG(t, 2, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(64 << 20); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	_, err = runRead(env, `{"path":"huge.png"}`)
+	runtime.ReadMemStats(&after)
+	if err == nil || !strings.Contains(err.Error(), "64.0 MB") {
+		t.Fatalf("err = %v, want the size named", err)
+	}
+	if grown := after.TotalAlloc - before.TotalAlloc; grown > 16<<20 {
+		t.Errorf("refusing the picture allocated %d MB", grown>>20)
+	}
+	if len(*got) != 0 {
+		t.Error("an oversized picture was attached")
 	}
 }

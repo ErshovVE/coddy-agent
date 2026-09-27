@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/acp"
@@ -137,5 +138,57 @@ func TestTheLiveMessageMovesBelowAPictureItWouldOtherwiseAnswerFromAbove(t *test
 	}
 	if shown[2].ReplyToMessageID != asked.MessageID {
 		t.Errorf("the answer replies to %d, want the person's message %d", shown[2].ReplyToMessageID, asked.MessageID)
+	}
+}
+
+// Telegram may refuse to delete the live message (too old, already gone); the
+// answer still comes below the photo, as a new reply, rather than as an edit
+// of the message above it.
+func TestTheAnswerComesBelowThePictureWhenTheLiveMessageCannotBeDeleted(t *testing.T) {
+	f := newFakeAPI(t, tgfake.Options{})
+	f.fake.SetFault(tgfake.Fault{Method: "deleteMessage", Code: http.StatusBadRequest, Description: "Bad Request: message can't be deleted", Times: 1})
+	asked := f.userMessage(5, 5, "look at it")
+	dir := t.TempDir()
+	_, update := savedPicture(t, dir, "shot-1a.png")
+	s := newSender(f.api, 5, asked.MessageID, slog.Default(), richConfig{})
+	s.pictures = fixedSession{id: "sess_chat", dir: dir}
+
+	_ = s.SendSessionUpdate("sess_chat", chunk("Let me look."))
+	_ = s.SendSessionUpdate("sess_chat", update)
+	s.Flush()
+
+	msgs := f.fake.Chat(5).Messages
+	photoAt, answerAt := -1, -1
+	for i, m := range msgs {
+		if m.Photo != nil {
+			photoAt = i
+		}
+		if m.From == "bot" && !m.Deleted && strings.Contains(m.Text, "Let me look.") && !strings.HasSuffix(m.Text, "…") {
+			answerAt = i
+		}
+	}
+	if photoAt < 0 || answerAt < photoAt {
+		t.Fatalf("chat = %+v, want the finished answer below the photo", msgs)
+	}
+	if msgs[answerAt].ReplyToMessageID != asked.MessageID {
+		t.Errorf("the answer replies to %d, want %d", msgs[answerAt].ReplyToMessageID, asked.MessageID)
+	}
+}
+
+// Only a refusal of the photo itself (a 400: its size, its shape) is worth
+// sending the file again as a document; a rate limit or a server error is
+// not, and would only double the traffic.
+func TestAPictureIsNotResentAsADocumentAfterARateLimit(t *testing.T) {
+	f := newFakeAPI(t, tgfake.Options{})
+	f.fake.SetFault(tgfake.Fault{Method: "sendPhoto", Code: http.StatusTooManyRequests, Description: "Too Many Requests: retry after 3", RetryAfter: 3, Times: 1})
+	dir := t.TempDir()
+	_, update := savedPicture(t, dir, "shot-1a.png")
+	s := newSender(f.api, 5, 0, slog.Default(), richConfig{})
+	s.pictures = fixedSession{id: "sess_chat", dir: dir}
+
+	_ = s.SendSessionUpdate("sess_chat", update)
+
+	if calls := f.fake.Calls("sendDocument"); len(calls) != 0 {
+		t.Fatalf("the picture was sent again as a document after a 429: %+v", calls)
 	}
 }

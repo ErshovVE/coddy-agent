@@ -102,6 +102,13 @@ func executeRead(_ context.Context, argsJSON string, env *tooling.Env) (string, 
 		return listDirContent(path, args.Recursive, args.ShowHidden)
 	}
 
+	// A picture over the limit is refused by its size on disk, before the
+	// whole file is loaded to be refused anyway.
+	if st.Size() > readImageMaxBytes {
+		if kind := sniffFileHead(path); readImageFormats[kind] != "" {
+			return "", oversizedImage(args.Path, kind, st.Size(), env)
+		}
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)

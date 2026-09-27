@@ -43,6 +43,12 @@ func AssetThumbnailRoute(sessionID, assetName string) string {
 // toolImageStemMax bounds the part of a copy's name taken from the file's.
 const toolImageStemMax = 80
 
+// toolImageThumbnailMaxPixels bounds the pictures a read gets a thumbnail
+// for. Making one decodes the whole picture, and a session may read many
+// large ones, so past 16 megapixels (64 MB decoded) the copy gets none and
+// the web UI previews the original.
+const toolImageThumbnailMaxPixels = 16_000_000
+
 // toolImageExt names a copy by the type the model was sent, which is not
 // always the file's own: a GIF goes as the PNG of its first frame.
 var toolImageExt = map[string]string{
@@ -99,7 +105,7 @@ func SaveToolImageAsset(sessionDir, name, mimeType string, data []byte) (assetPa
 	if info, statErr := os.Lstat(thumbPath); statErr == nil && info.Mode().IsRegular() {
 		return assetPath, thumbPath, nil
 	}
-	thumb, ok := makeImageThumbnail(data)
+	thumb, ok := makeImageThumbnailWithin(data, toolImageThumbnailMaxPixels)
 	if !ok {
 		return assetPath, "", nil
 	}
