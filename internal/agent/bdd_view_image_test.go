@@ -79,14 +79,19 @@ func (s *viewImageFeatureState) modelWithoutImages() error {
 }
 
 func (s *viewImageFeatureState) writeFile(name string) error {
-	return os.WriteFile(filepath.Join(s.cwd, name), []byte("bytes of "+name), 0o644)
+	return os.WriteFile(filepath.Join(s.cwd, name), []byte("plain text in "+name), 0o644)
+}
+
+// writePNG writes a PNG signature, all view_image needs to tell the type.
+func (s *viewImageFeatureState) writePNG(name string) error {
+	return os.WriteFile(filepath.Join(s.cwd, name), []byte("\x89PNG\r\n\x1a\n"+name), 0o644)
 }
 
 func (s *viewImageFeatureState) twoImages(a, b string) error {
-	if err := s.writeFile(a); err != nil {
+	if err := s.writePNG(a); err != nil {
 		return err
 	}
-	return s.writeFile(b)
+	return s.writePNG(b)
 }
 
 func (s *viewImageFeatureState) agent() *Agent {

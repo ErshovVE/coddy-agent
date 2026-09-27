@@ -19,7 +19,7 @@ Feature: The model looks at an image file with view_image
     Given a model that reads images
     And a workspace file "notes.txt"
     When the model views "notes.txt", then answers
-    Then the tool result says "not a recognized image type"
+    Then the tool result says "is not a PNG, JPEG, GIF or WebP image"
     And the next LLM request carries no images
 
   Scenario: A model that does not read images is not offered the tool and a call is refused

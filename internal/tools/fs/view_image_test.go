@@ -13,8 +13,14 @@ import (
 	"github.com/EvilFreelancer/coddy-agent/internal/tooling"
 )
 
-// pngHeader is enough bytes for the tool: it checks the extension, not the content.
-var pngHeader = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+// The signatures http.DetectContentType recognizes: enough bytes for the
+// tool, which tells the type by content, not by name.
+var (
+	pngHeader  = []byte("\x89PNG\r\n\x1a\n")
+	jpegHeader = []byte("\xff\xd8\xff\xe0")
+	gifHeader  = []byte("GIF89a")
+	webpHeader = []byte("RIFF\x00\x00\x00\x00WEBPVP8 ")
+)
 
 func viewImageEnv(cwd string, queued *[]llm.ImagePart) *tooling.Env {
 	return &tooling.Env{
@@ -32,17 +38,21 @@ func TestViewImageQueuesTheFileAsADataURL(t *testing.T) {
 	tests := []struct {
 		name     string
 		file     string
+		content  []byte
 		wantMime string
 	}{
-		{name: "png", file: "shot.png", wantMime: "image/png"},
-		{name: "upper-case jpeg", file: "photo.JPEG", wantMime: "image/jpeg"},
-		{name: "webp", file: "page.webp", wantMime: "image/webp"},
+		{name: "png", file: "shot.png", content: pngHeader, wantMime: "image/png"},
+		{name: "jpeg", file: "photo.JPEG", content: jpegHeader, wantMime: "image/jpeg"},
+		{name: "gif", file: "anim.gif", content: gifHeader, wantMime: "image/gif"},
+		{name: "webp", file: "page.webp", content: webpHeader, wantMime: "image/webp"},
+		{name: "content wins over the name", file: "misnamed.jpg", content: pngHeader, wantMime: "image/png"},
+		{name: "no extension", file: "capture", content: pngHeader, wantMime: "image/png"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			root := t.TempDir()
-			if err := os.WriteFile(filepath.Join(root, tt.file), pngHeader, 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(root, tt.file), tt.content, 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var queued []llm.ImagePart
@@ -55,7 +65,7 @@ func TestViewImageQueuesTheFileAsADataURL(t *testing.T) {
 			if len(queued) != 1 {
 				t.Fatalf("queued %d parts, want 1", len(queued))
 			}
-			want := "data:" + tt.wantMime + ";base64," + base64.StdEncoding.EncodeToString(pngHeader)
+			want := "data:" + tt.wantMime + ";base64," + base64.StdEncoding.EncodeToString(tt.content)
 			if queued[0].DataURL != want {
 				t.Errorf("DataURL = %q, want %q", queued[0].DataURL, want)
 			}
@@ -79,8 +89,15 @@ func TestViewImageRefusesWithoutQueueing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("text"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "shot.png"), pngHeader, 0o644); err != nil {
-		t.Fatal(err)
+	files := map[string]string{
+		"shot.png":    string(pngHeader),
+		"renamed.png": "just text",
+		"icon.bmp":    "BM\x00\x00\x00\x00",
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	tests := []struct {
 		name    string
@@ -90,7 +107,9 @@ func TestViewImageRefusesWithoutQueueing(t *testing.T) {
 		wantErr string
 	}{
 		{name: "empty path", args: `{"path":"  "}`, wantErr: "path is required"},
-		{name: "not an image", args: `{"path":"notes.txt"}`, wantErr: "not a recognized image type"},
+		{name: "not an image", args: `{"path":"notes.txt"}`, wantErr: "is not a PNG, JPEG, GIF or WebP image"},
+		{name: "text renamed to .png", args: `{"path":"renamed.png"}`, wantErr: "reads as text/plain"},
+		{name: "an image format providers do not take", args: `{"path":"icon.bmp"}`, wantErr: "reads as image/bmp"},
 		{name: "missing file", args: `{"path":"absent.png"}`, wantErr: "absent.png"},
 		{name: "no session to deliver to", args: `{"path":"shot.png"}`, noQueue: true, wantErr: "not available"},
 		{name: "the model does not read images", args: `{"path":"shot.png"}`, refuses: true, wantErr: "does not read images"},

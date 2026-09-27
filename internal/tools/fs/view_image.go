@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,14 +13,14 @@ import (
 	"github.com/EvilFreelancer/coddy-agent/internal/tooling"
 )
 
-// viewImageExtToMime covers the common cases explicitly; mime.TypeByExtension
-// is tried as a fallback for anything else the local system recognizes.
-var viewImageExtToMime = map[string]string{
-	".png":  "image/png",
-	".jpg":  "image/jpeg",
-	".jpeg": "image/jpeg",
-	".gif":  "image/gif",
-	".webp": "image/webp",
+// viewImageTypes are the image formats the OpenAI-compatible image_url part
+// accepts. The type is sniffed from the file's content, never taken from its
+// name, so a renamed text file is refused here instead of by the provider.
+var viewImageTypes = map[string]bool{
+	"image/png":  true,
+	"image/jpeg": true,
+	"image/gif":  true,
+	"image/webp": true,
 }
 
 // ViewImageTool returns the view_image built-in: base64-encodes an image
@@ -35,7 +35,7 @@ func ViewImageTool() *tooling.Tool {
 	return &tooling.Tool{
 		Definition: llm.ToolDefinition{
 			Name: "view_image",
-			Description: "View an image file (PNG/JPEG/GIF/WebP) as an actual picture. " +
+			Description: "View an image file (PNG, JPEG, GIF or WebP, told by its content) as an actual picture. " +
 				"Use it to inspect a screenshot, a diagram or a rendered page instead of guessing " +
 				"from its name; `read` refuses binary files. The image is shown to you in a message " +
 				"right after this batch of tool calls; to compare several, view each with its own " +
@@ -72,18 +72,13 @@ func executeViewImage(_ context.Context, argsJSON string, env *tooling.Env) (str
 	}
 
 	path := ResolvePath(args.Path, env.CWD)
-	ext := strings.ToLower(filepath.Ext(path))
-	mimeType := viewImageExtToMime[ext]
-	if mimeType == "" {
-		mimeType = mime.TypeByExtension(ext)
-	}
-	if !strings.HasPrefix(mimeType, "image/") {
-		return "", fmt.Errorf("view_image: %q is not a recognized image type (expected .png/.jpg/.jpeg/.gif/.webp)", ext)
-	}
-
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("view_image: %w", err)
+	}
+	mimeType := http.DetectContentType(data)
+	if !viewImageTypes[mimeType] {
+		return "", fmt.Errorf("view_image: %s is not a PNG, JPEG, GIF or WebP image (its content reads as %s)", filepath.Base(path), mimeType)
 	}
 
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(data))
