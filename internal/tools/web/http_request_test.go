@@ -864,7 +864,8 @@ func TestHTTPRequestDescribeKeepsAConfiguredCredentialOutOfThePrompt(t *testing.
 	// of a header that describes the client and of no other.
 	defaults := map[string]string{
 		"Authorization": "Bearer t0p-secret", "X-Api-Key": "k3y", "X-Auth": "s3ss", "Authentication": "Bearer 0ther",
-		"Sec-Token": "s3c", "User-Agent": browserUA, "Accept-Language": "en-US", "Sec-Ch-Ua-Platform": `"Linux"`,
+		"Sec-Token": "s3c", "Referer": "https://example.com/?sig=r3f", "User-Agent": browserUA,
+		"Accept-Language": "en-US", "Sec-Ch-Ua-Platform": `"Linux"`,
 	}
 	req, err := ParseHTTPRequestInEnv(`{"url":"https://api.example.com/items"}`, &tooling.Env{CWD: t.TempDir(), HTTPDefaultHeaders: defaults})
 	if err != nil {
@@ -877,16 +878,17 @@ func TestHTTPRequestDescribeKeepsAConfiguredCredentialOutOfThePrompt(t *testing.
 		"X-Api-Key: <redacted>",
 		"X-Auth: <redacted>",
 		"Sec-Token: <redacted>",
+		"Referer: <redacted>",
 		"User-Agent: " + browserUA,
 		"Accept-Language: en-US",
 		`Sec-Ch-Ua-Platform: "Linux"`,
-		"Headers from tools.http_request.default_headers: Accept-Language, Authentication, Authorization, Sec-Ch-Ua-Platform, Sec-Token, User-Agent, X-Api-Key, X-Auth",
+		"Headers from tools.http_request.default_headers: Accept-Language, Authentication, Authorization, Referer, Sec-Ch-Ua-Platform, Sec-Token, User-Agent, X-Api-Key, X-Auth",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("description does not show %q:\n%s", want, text)
 		}
 	}
-	for _, secret := range []string{"t0p-secret", "k3y", "s3ss", "0ther", "s3c"} {
+	for _, secret := range []string{"t0p-secret", "k3y", "s3ss", "0ther", "s3c", "r3f"} {
 		if strings.Contains(text, secret) {
 			t.Errorf("the prompt shows the configured credential %q:\n%s", secret, text)
 		}

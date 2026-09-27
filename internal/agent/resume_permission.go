@@ -94,16 +94,17 @@ func (a *Agent) ResumeAfterPermission(ctx context.Context, toolCallID string, pe
 }
 
 // httpPromptMoved reports whether the http_request prompt persisted for tc
-// reads otherwise than the prompt the call would get in env now. A record that
-// cannot be read, or belongs to another call, shows no difference: the
-// arguments in the bundle bind the answer as they always have.
+// reads otherwise than the prompt the call would get in env now. The server
+// resumes a call only while its prompt is on record, so a record gone or
+// holding another call by the time it is read here means the prompt was
+// changed under the answer: that asks again too.
 func httpPromptMoved(sessionDir string, tc llm.ToolCall, env *tools.Env) bool {
 	if strings.TrimSpace(sessionDir) == "" {
 		return false
 	}
 	rec, err := session.ReadPendingPermission(sessionDir)
 	if err != nil || rec == nil || strings.TrimSpace(rec.ToolCall.ToolCallID) != tc.ID {
-		return false
+		return true
 	}
 	var shown strings.Builder
 	for _, item := range rec.ToolCall.Content {

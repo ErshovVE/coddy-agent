@@ -624,7 +624,8 @@ func (r *HTTPRequest) parseHeaders(raw map[string]json.RawMessage, defaults map[
 func describesTheClient(name string) bool {
 	switch name {
 	case "User-Agent", "Accept", "Accept-Language", "Accept-Encoding", "Accept-Charset",
-		"Cache-Control", "Pragma", "Dnt", "Referer", "Origin", "Upgrade-Insecure-Requests":
+		"Cache-Control", "Pragma", "Dnt", "Origin", "Upgrade-Insecure-Requests":
+		// Not Referer: a URL there may carry a signed query.
 		return true
 	}
 	// The client hints and the fetch metadata a browser adds (Sec-Ch-Ua-Platform,
@@ -856,10 +857,17 @@ func (r *HTTPRequest) Describe() string {
 func (r *HTTPRequest) describeConfigured() string {
 	names := make([]string, 0, len(r.configured)+len(r.notSent))
 	names = append(names, r.configured...)
-	for _, name := range r.notSent {
-		names = append(names, name+" (not sent)")
-	}
+	names = append(names, r.notSent...)
 	sort.Strings(names)
+	notSent := make(map[string]bool, len(r.notSent))
+	for _, name := range r.notSent {
+		notSent[name] = true
+	}
+	for i, name := range names {
+		if notSent[name] {
+			names[i] = name + " (not sent)"
+		}
+	}
 	return strings.Join(names, ", ")
 }
 

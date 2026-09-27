@@ -357,7 +357,9 @@ func refuseRedactedPlaceholder(node *yaml.Node, path []string) error {
 			}
 		}
 	case yaml.ScalarNode:
-		if node.Value == redactedConfigValue && configSecretPath(path) {
+		// A map whose every value is a secret (default_headers) takes the
+		// placeholder no better as a whole than entry by entry.
+		if node.Value == redactedConfigValue && (configSecretPath(path) || configSecretPath(appendPath(path, ""))) {
 			return fmt.Errorf("%s is what config_get shows in place of a secret, not its value: stage the real value, or leave the key out of the command", redactedConfigValue)
 		}
 	}

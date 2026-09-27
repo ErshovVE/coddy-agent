@@ -605,7 +605,19 @@ func TestHTTPRequestEnvCopiesTheSection(t *testing.T) {
 // headers the configuration adds have changed since, the resumed call asks
 // again with the request it would send now; when nothing changed it just runs.
 func TestResumedHTTPRequestAsksAgainWhenTheDefaultHeadersMoved(t *testing.T) {
-	for _, moved := range []bool{false, true} {
+	for _, c := range []struct {
+		name          string
+		moved, gone   bool
+		wantPrompts   int
+		wantUserAgent string
+	}{
+		{name: "unchanged", wantPrompts: 0, wantUserAgent: "shown/1"},
+		{name: "moved", moved: true, wantPrompts: 1, wantUserAgent: "moved/2"},
+		// The server resumes only a call whose prompt is on record; a record
+		// gone by the time the call reads it was changed under the answer.
+		{name: "record gone", gone: true, wantPrompts: 1, wantUserAgent: "shown/1"},
+	} {
+		moved := c.moved
 		var mu sync.Mutex
 		var agents []string
 		service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -650,6 +662,11 @@ func TestResumedHTTPRequestAsksAgainWhenTheDefaultHeadersMoved(t *testing.T) {
 		if moved {
 			cfg.Tools.HTTPRequest.DefaultHeaders = map[string]string{"User-Agent": "moved/2", "X-Client": "coddy-lab"}
 		}
+		if c.gone {
+			if err := session.ClearPendingPermission(sd); err != nil {
+				t.Fatal(err)
+			}
+		}
 
 		sender := &bddHTTPPermissionSender{answer: "allow"}
 		ag := NewAgent(cfg, st, sender, nil)
@@ -662,17 +679,14 @@ func TestResumedHTTPRequestAsksAgainWhenTheDefaultHeadersMoved(t *testing.T) {
 		mu.Lock()
 		sent := append([]string(nil), agents...)
 		mu.Unlock()
-		if !moved {
-			if len(sender.requests) != 0 {
-				t.Errorf("an unchanged request asked again: %d prompts", len(sender.requests))
-			}
-			if len(sent) != 1 || sent[0] != "shown/1" {
-				t.Errorf("the service received User-Agents %q, want the one the prompt showed", sent)
-			}
-			continue
+		if len(sender.requests) != c.wantPrompts {
+			t.Fatalf("%s: the resumed request was asked %d times, want %d", c.name, len(sender.requests), c.wantPrompts)
 		}
-		if len(sender.requests) != 1 {
-			t.Fatalf("the moved request was asked %d times, want once more", len(sender.requests))
+		if len(sent) != 1 || sent[0] != c.wantUserAgent {
+			t.Errorf("%s: the service received User-Agents %q, want %q", c.name, sent, c.wantUserAgent)
+		}
+		if !moved {
+			continue
 		}
 		var text strings.Builder
 		for _, item := range sender.requests[0].ToolCall.Content {
@@ -680,9 +694,6 @@ func TestResumedHTTPRequestAsksAgainWhenTheDefaultHeadersMoved(t *testing.T) {
 		}
 		if !strings.Contains(text.String(), "User-Agent: moved/2") || !strings.Contains(text.String(), "X-Client") {
 			t.Errorf("the new prompt does not show the request as it goes out now:\n%s", text.String())
-		}
-		if len(sent) != 1 || sent[0] != "moved/2" {
-			t.Errorf("the service received User-Agents %q, want the one the new prompt showed", sent)
 		}
 	}
 }
