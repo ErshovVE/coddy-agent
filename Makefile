@@ -1,4 +1,4 @@
-.PHONY: build build-acp ui-deps ui-build ui-test ui-typecheck test test-matrix test-race test-cache test-perf print-test-tag-sets print-full-tags print-lint-tags-no-ui test-opencode-rules check-windows lint lint-windows clean install print-version hooks deb rpm brew brew-formula brew-check site-schema site-schema-check docs docs-check docs-changelog docs-fast site-docs site-docs-check skills-vendor skills-vendor-check
+.PHONY: build build-acp android check-android ui-deps ui-build ui-test ui-typecheck test test-matrix test-race test-cache test-perf print-test-tag-sets print-full-tags print-lint-tags-no-ui test-opencode-rules check-windows lint lint-windows clean install print-version hooks deb rpm brew brew-formula brew-check site-schema site-schema-check docs docs-check docs-changelog docs-fast site-docs site-docs-check skills-vendor skills-vendor-check
 
 # ---- Build options (extend when you add optional Go build tags) ----
 #   TAGS   optional extra `go build -tags` values (space-separated).
@@ -72,6 +72,26 @@ ui-typecheck: ui-deps
 build:
 	@mkdir -p $(BUILD_DIR)
 	go build $(GO_TAGS_FLAG) -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/coddy/
+
+# ---- Android (Termux) ----
+#
+# The Android build is the same sources with GOOS=android and no cgo. Go links
+# android/arm64 on its own, into a position-independent executable that names
+# the Android system linker as its interpreter: the one shape Termux can start
+# where it runs programs as `/system/bin/linker64 <path>`, which is Android 10
+# and later for a Termux that targets them (the Google Play build). The static
+# GOOS=linux binary is refused there with `has unexpected e_type: 2`. The other
+# Android architectures need the NDK to link and are not built. TAGS works as
+# for `build`. See docs/getting-started/android.md.
+ANDROID_BINARY := $(BUILD_DIR)/coddy-android-arm64
+
+ifneq ($(and $(findstring http,$(TAGS)),$(findstring ui,$(TAGS))),)
+android: ui-build
+endif
+
+android:
+	@mkdir -p $(BUILD_DIR)
+	GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build $(GO_TAGS_FLAG) -ldflags "$(LDFLAGS)" -o $(ANDROID_BINARY) ./cmd/coddy/
 
 # Print the same version string embedded by `make build` (for manual go build -ldflags).
 print-version:
@@ -324,6 +344,16 @@ check-windows:
 	GOOS=windows go vet -tags=gateway ./...
 	GOOS=windows go vet -tags=http,scheduler,memory,cli,gateway ./...
 	GOOS=windows go vet -tags=http,scheduler,memory,cli,gateway,swarm ./...
+
+# Type-check the Android build without a device, test files included.
+#
+# internal/platform has files only GOOS=android compiles - the Termux
+# adjustments in android_init.go and android_dns.go - so the host suite and
+# linter never see them, the way check-windows covers the Windows half. The
+# ui tag is left out for the same reason as there.
+check-android:
+	GOOS=android GOARCH=arm64 CGO_ENABLED=0 go vet ./...
+	GOOS=android GOARCH=arm64 CGO_ENABLED=0 go vet -tags=$(LINT_TAGS_NO_UI_CSV) ./...
 
 # Clean build artifacts.
 clean:

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/EvilFreelancer/coddy-agent/internal/platform"
 )
 
 // MaxIndexEntries caps a workspace index: a checkout larger than that is
@@ -122,6 +124,7 @@ func gitListFiles(ctx context.Context, root string, limit int) ([]string, bool, 
 func runGitZ(ctx context.Context, gitPath, root string, limit int, args ...string) ([]string, bool, error) {
 	cmd := exec.CommandContext(ctx, gitPath, append([]string{"-C", root, "-c", "core.quotepath=off"}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
+	platform.AdaptCommand(cmd)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()

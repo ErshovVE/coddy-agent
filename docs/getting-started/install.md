@@ -16,6 +16,9 @@ curl -fsSL https://coddy.dev/install.sh | bash
 irm https://coddy.dev/install.ps1 | iex
 ```
 
+**Android (Termux)**: the same **`install.sh`** fetches the Android build; see
+[Android (Termux)](#android-termux).
+
 Creates **`~/.coddy/config.yaml`** from the release **`config.example.yaml`** when missing.
 
 On Linux and macOS the script installs more than the binary. The release archive carries the man
@@ -175,6 +178,21 @@ privileged shortcut there.
 
 If macOS blocks the first run because the binary is not notarised, clear the quarantine flag:
 **`xattr -d com.apple.quarantine "$(which coddy)"`**.
+
+## Android (Termux)
+
+```bash
+pkg install curl
+curl -fsSL https://coddy.dev/install.sh | bash
+```
+
+In Termux the script fetches **`coddy_X.Y.Z_android_arm64.tar.gz`**, a build for Android on 64-bit
+ARM. The Linux archive does not start there: a Termux that targets Android 10 or later runs every
+program through Android's linker, which turns a static executable away with
+**`has unexpected e_type: 2`**. The rest of the install is the Linux one: **`~/.local/bin`**, the
+man page and the completions in **`~/.local/share`**, and the block in **`~/.bashrc`**. What differs
+on the device (the programs Coddy starts, name resolution, certificates, running
+**`coddy serve`** in the background) is on its own page: [Android (Termux)](android.md).
 
 ## After install
 

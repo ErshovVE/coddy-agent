@@ -17,6 +17,12 @@ func AssetFileName(version, goos, goarch string) (string, error) {
 		if goarch == "amd64" {
 			return fmt.Sprintf("coddy_%s_windows_amd64.zip", version), nil
 		}
+	case "android":
+		// Built with GOOS=android and no cgo, which Go links on its own for
+		// arm64 only; the other Android architectures need the NDK.
+		if goarch == "arm64" {
+			return fmt.Sprintf("coddy_%s_android_arm64.tar.gz", version), nil
+		}
 	}
 	return "", fmt.Errorf("unsupported platform %s/%s", goos, goarch)
 }

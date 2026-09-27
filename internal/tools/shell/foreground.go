@@ -78,6 +78,7 @@ func startForegroundInto(command string, env *tooling.Env, commandShell platform
 	cmd.Stderr = writer
 	cmd.WaitDelay = waitPipeDrainDelay
 	platform.DetachProcessGroup(cmd)
+	platform.AdaptCommand(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return nil, err

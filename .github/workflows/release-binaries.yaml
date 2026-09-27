@@ -159,6 +159,12 @@ jobs:
 
           build_target linux amd64
           build_target linux arm64
+          # Termux on Android. GOOS=android makes the position-independent
+          # executable the Android system linker loads; the static linux
+          # build above is refused by it (`has unexpected e_type: 2`) where
+          # Termux runs programs through /system/bin/linker64. Go links only
+          # arm64 without the NDK, so that is the one Android build.
+          build_target android arm64
           build_target windows amd64
           build_target darwin amd64
           build_target darwin arm64

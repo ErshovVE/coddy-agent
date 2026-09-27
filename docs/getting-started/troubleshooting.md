@@ -274,6 +274,21 @@ brew upgrade --cask coddy                               # the cask; a formula in
 
 A copy under `~/.local/bin` or a build of your own is untouched by any of this and keeps updating itself. See [Update](update.md#installations-owned-by-a-package-manager).
 
+## Termux says `has unexpected e_type: 2` or `Bad system call`
+
+**Symptom.** In Termux on Android, `coddy` stops at once with `error: ".../coddy" has unexpected e_type: 2`. Or it starts, but a provider request fails with `x509: certificate signed by unknown authority` or `lookup ... on [::1]:53: ... connection refused`, or the process dies with `Bad system call`.
+
+**Cause.** That is the Linux build. A Termux that targets Android 10 or later starts every program through Android's linker, which loads position-independent executables only, and the Linux build is a static one. Where Termux starts it directly, it looks for certificates and for `/etc/resolv.conf` at Linux paths Android does not have, and some Android versions forbid a system call it makes.
+
+**Fix.** Install the Android build, `coddy_X.Y.Z_android_arm64.tar.gz`, which the install script picks in Termux. Running the script again replaces the Linux binary in place:
+
+```bash
+curl -fsSL https://coddy.dev/install.sh | bash
+coddy -v
+```
+
+With the Android build, a host that still does not resolve means the nameservers of `$PREFIX/etc/resolv.conf` are not reachable from the current network; put ones that are. See [Android (Termux)](android.md).
+
 ## Windows notes
 
 - **Paths.** The binary is `%LOCALAPPDATA%\Programs\coddy\coddy.exe`; config and sessions live under `%USERPROFILE%\.coddy\`. Use `$env:USERPROFILE`, not `$HOME`, which differs between Windows PowerShell and Git Bash.

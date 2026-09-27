@@ -141,7 +141,9 @@ func runAPIKeyCommandContext(parent context.Context, command string) (string, er
 	defer cancel()
 	commandShell := platform.CurrentShell()
 	executable, args := commandShell.Command(command)
-	out, err := exec.CommandContext(ctx, executable, args...).Output()
+	cmd := exec.CommandContext(ctx, executable, args...)
+	platform.AdaptCommand(cmd)
+	out, err := cmd.Output()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", ctxErr

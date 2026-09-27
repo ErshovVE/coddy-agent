@@ -11,6 +11,7 @@ import (
 
 	"github.com/EvilFreelancer/coddy-agent/external/cli/tui"
 	"github.com/EvilFreelancer/coddy-agent/internal/acp"
+	"github.com/EvilFreelancer/coddy-agent/internal/platform"
 )
 
 // footer renders the status lines under the editor (pi FooterComponent):
@@ -261,6 +262,7 @@ func detectGitBranch(cwd string) string {
 	// A helper git left behind (a credential prompt) still holds the output
 	// pipe after the timeout killed git itself; do not wait for it either.
 	cmd.WaitDelay = time.Second
+	platform.AdaptCommand(cmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""

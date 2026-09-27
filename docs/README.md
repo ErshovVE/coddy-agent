@@ -10,11 +10,12 @@ New here? Read [Quickstart](getting-started/quickstart.md), then the page of the
 Install Coddy, give it a model, run it for the first time and keep it updated.
 
 - [Quickstart](getting-started/quickstart.md) - From a fresh install to the first answer in five minutes, on the console, in the browser and from an editor.
-- [Install](getting-started/install.md) - One-line installers, release archives, Linux .deb and .rpm packages, Homebrew, Windows paths, manual placement.
+- [Install](getting-started/install.md) - One-line installers, release archives, Linux .deb and .rpm packages, Homebrew, Termux on Android, Windows paths, manual placement.
 - [Configuration](getting-started/configuration.md) - Where config.yaml lives, how to check it with -t and --dry-run, providers and models, SSH remote execution, the .env file.
 - [Update](getting-started/update.md) - coddy update, release assets, installations owned by a package manager, the report of what changed.
 - [Docker](getting-started/docker.md) - The GHCR image, docker compose, volumes and environment, the bundled UI on port 12345.
 - [Homebrew](getting-started/homebrew.md) - The cask against the formula, which Homebrew repository takes what, the homebrew/core submission.
+- [Android (Termux)](getting-started/android.md) - The Android build for Termux, why the Linux archive does not start there, and what Coddy adapts on the device.
 - [Troubleshooting](getting-started/troubleshooting.md) - What to check when the binary is not on PATH, the config does not load, a provider rejects the key, a port is busy or a surface is missing from the build.
 - [Changelog](getting-started/changelog.md) - Release notes of every published version, generated from GitHub Releases.
 
