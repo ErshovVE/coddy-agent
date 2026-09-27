@@ -6,7 +6,6 @@ import (
 
 	"github.com/EvilFreelancer/coddy-agent/internal/acp"
 	"github.com/EvilFreelancer/coddy-agent/internal/bgtask"
-	"github.com/EvilFreelancer/coddy-agent/internal/llm"
 	"github.com/EvilFreelancer/coddy-agent/internal/plans"
 )
 
@@ -150,15 +149,14 @@ type Env struct {
 	// means the built-in defaults.
 	WebSearch *WebSearchSettings
 
-	// QueueImageParts queues image parts to be delivered to the model as a
-	// synthetic user message once the current tool batch has its results --
-	// tool results (role "tool") cannot carry image content per the
-	// OpenAI-compatible chat completions schema, only "user"/"assistant"
-	// messages can, so a tool that wants the model to actually see a
-	// picture (view_image) queues it here instead of returning it directly.
-	// It refuses when the session's current model does not read images
-	// (models[].multimodal). Nil where no session backs the run.
-	QueueImageParts func(parts []llm.ImagePart) error
+	// AttachImage hands the model a picture together with the result of the
+	// running tool call: read calls it for a PNG, JPEG, GIF or WebP file. The
+	// agent keeps the picture on that call's result, where every surface finds
+	// it (the web UI previews it, a Telegram chat is sent it), keeps a copy
+	// with the session's assets, and refuses when the session's model does not
+	// read images (models[].multimodal). Nil where no agent runs the call, and
+	// read then refuses the file as binary.
+	AttachImage func(name, mimeType string, data []byte) error
 
 	// PreviewServer is the resolved tools.preview_server section the
 	// preview_server tool reads its bind host from. Like WebSearch it travels

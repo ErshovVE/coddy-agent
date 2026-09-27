@@ -202,9 +202,6 @@ type State struct {
 
 	// pendingImageParts are image attachments for the next user message (from inline_files in agent mode); not persisted.
 	pendingImageParts []llm.ImagePart
-	// toolImageParts are images tool calls of the running batch queued for the
-	// model (view_image); not persisted.
-	toolImageParts []llm.ImagePart
 	// surfaceSystemPrompt is the block the surface running the current turn
 	// contributed to the system prompt; turn-scoped and never persisted.
 	surfaceSystemPrompt string
@@ -1521,25 +1518,6 @@ func (s *State) TakePendingImageParts() []llm.ImagePart {
 	defer s.mu.Unlock()
 	out := s.pendingImageParts
 	s.pendingImageParts = nil
-	return out
-}
-
-// AppendToolImageParts queues images a tool call wants the model to see
-// (view_image). Several calls of one batch add up and are delivered together
-// once the batch has its results. Kept apart from the pending attachments,
-// so an image a tool queued never becomes part of the user's next prompt.
-func (s *State) AppendToolImageParts(parts []llm.ImagePart) {
-	s.mu.Lock()
-	s.toolImageParts = append(s.toolImageParts, parts...)
-	s.mu.Unlock()
-}
-
-// TakeToolImageParts returns and clears the images tool calls queued.
-func (s *State) TakeToolImageParts() []llm.ImagePart {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := s.toolImageParts
-	s.toolImageParts = nil
 	return out
 }
 

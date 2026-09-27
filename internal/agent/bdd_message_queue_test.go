@@ -121,9 +121,12 @@ func (s *queueFeatureState) buildSession(steps []scriptStep) error {
 	s.cfg = &config.Config{
 		Paths:     config.Paths{Home: s.home, CWD: s.cwd, ConfigPath: filepath.Join(s.home, "config.yaml")},
 		Providers: []config.ProviderConfig{{Name: "fake", Type: "openai", APIKey: "test"}},
-		Models:    []config.ModelEntry{{Model: "fake/model", MaxTokens: 100}},
-		Agent:     config.Agent{Model: "fake/model", MaxTurns: 6},
-		Sessions:  config.Sessions{Dir: filepath.Join(s.root, "sessions")},
+		// A queued image reaches only a model that reads images: the HTTP
+		// queue drops it for any other, and the send boundary never shows a
+		// picture to a model without multimodal.
+		Models:   []config.ModelEntry{{Model: "fake/model", MaxTokens: 100, Multimodal: true}},
+		Agent:    config.Agent{Model: "fake/model", MaxTurns: 6},
+		Sessions: config.Sessions{Dir: filepath.Join(s.root, "sessions")},
 	}
 	s.cfg.Tools.PermissionMode = config.PermModeBypass
 	s.cfg.Hooks.ApplyDefaults(s.cfg.Paths)

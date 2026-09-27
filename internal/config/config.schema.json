@@ -99,7 +99,7 @@
           },
           "multimodal": {
             "type": "boolean",
-            "description": "Model accepts image/file inputs in addition to text; the UI shows a file attachment button for this model, and the model is offered the `view_image` tool.",
+            "description": "Model accepts image/file inputs in addition to text; the UI shows a file attachment button for this model, and read shows it the picture in a PNG, JPEG, GIF or WebP file instead of refusing it as binary.",
             "default": false
           },
           "reasoning_levels": {
