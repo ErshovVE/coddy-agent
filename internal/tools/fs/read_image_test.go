@@ -561,3 +561,27 @@ func TestReadTellsAModelWithoutImagesSoFirst(t *testing.T) {
 		t.Errorf("attached %d pictures for a model that cannot see them", len(*got))
 	}
 }
+
+// Stray bytes between the segments of a JPEG are skipped to the next marker,
+// as libjpeg does with a warning and Go's decoder after it: such a file
+// decodes everywhere, so read takes it.
+func TestReadTakesAJPEGWithStrayBytesBetweenSegments(t *testing.T) {
+	env, got := imageEnv(t)
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, solidImage(64, 48), nil); err != nil {
+		t.Fatal(err)
+	}
+	data := jpg.Bytes()
+	first := 4 + int(binary.BigEndian.Uint16(data[4:6])) // SOI, then the first segment
+	stray := bytes.Join([][]byte{data[:first], {0x00, 0x13}, data[first:]}, nil)
+	if _, _, err := image.DecodeConfig(bytes.NewReader(stray)); err != nil {
+		t.Fatalf("the fixture does not decode: %v", err)
+	}
+	writeFile(t, env, "stray.jpg", stray)
+	if _, err := runRead(env, `{"path":"stray.jpg"}`); err != nil {
+		t.Fatalf("a JPEG with stray bytes between segments: %v", err)
+	}
+	if len(*got) != 1 {
+		t.Fatalf("attached %d pictures, want the JPEG", len(*got))
+	}
+}

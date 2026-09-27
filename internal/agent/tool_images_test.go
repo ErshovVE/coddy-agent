@@ -94,6 +94,7 @@ func TestWithToolImagesTellsAModelWithoutImagesThePicturesAreLeftOut(t *testing.
 		toolResultWith("r1", imagePart("a.png")),
 		{Role: llm.RoleAssistant, Content: "seen"},
 	}
+	before, _ := json.Marshal(history)
 	out := withToolImages(history, false, noToolImageFile)
 	for i, m := range out {
 		if len(m.ImageParts) > 0 {
@@ -108,6 +109,15 @@ func TestWithToolImagesTellsAModelWithoutImagesThePicturesAreLeftOut(t *testing.
 	}
 	if len(history[0].ImageParts) != 1 || len(history[2].ImageParts) != 1 {
 		t.Error("the history itself lost its pictures")
+	}
+	// The notes are written into the projection, never into the history, so
+	// the next request carries each of them once, byte for byte the same.
+	if after, _ := json.Marshal(history); string(after) != string(before) {
+		t.Error("the history itself was changed")
+	}
+	again, _ := json.Marshal(withToolImages(history, false, noToolImageFile))
+	if first, _ := json.Marshal(out); string(first) != string(again) {
+		t.Error("two requests over the same history differ")
 	}
 }
 

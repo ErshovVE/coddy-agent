@@ -220,13 +220,17 @@ func pngComplete(data []byte) error {
 }
 
 // jpegComplete follows the segments of a JPEG to its end-of-image marker,
-// skipping the entropy-coded data after each start of scan, and wants at
-// least one scan before the end: a JPEG with none holds no picture.
+// skipping the entropy-coded data after each start of scan and any stray byte
+// before a marker, and wants at least one scan before the end: a JPEG with
+// none holds no picture.
 func jpegComplete(data []byte) error {
 	sawScan := false
 	for i := 2; i+1 < len(data); {
 		if data[i] != 0xFF {
-			return errImageCut
+			// A stray byte between segments: libjpeg skips to the next
+			// marker with a warning, and Go's decoder after it.
+			i++
+			continue
 		}
 		m := data[i+1]
 		switch {
