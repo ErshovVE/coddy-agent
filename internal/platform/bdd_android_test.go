@@ -7,9 +7,7 @@ package platform
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,20 +26,15 @@ type androidFeatureState struct {
 	root string // stands for /data/data/com.termux
 	host androidHost
 
-	kernelExe  string   // what /proc/self/exe names
-	kernelArgs []string // the arguments the kernel handed over
-	args       []string // os.Args as Coddy sees them
-	self       string   // the path Coddy found for its own binary
+	kernelExe string   // what /proc/self/exe names
+	args      []string // os.Args as Bionic passed them to main
+	self      string   // the path Coddy found for its own binary
 
 	cmd    *exec.Cmd
 	script string // the script the scenario installed
-
-	query string // where the resolver sent its query
 }
 
 const androidFeatureCommand = "echo from bash"
-
-var errAndroidFeatureDial = errors.New("the scenario records the dial and stops there")
 
 func (s *androidFeatureState) reset() {
 	if s.root != "" {
@@ -85,33 +78,30 @@ func (s *androidFeatureState) linkerStartedCoddyWith(args string) error {
 	if err := s.termuxTree(); err != nil {
 		return err
 	}
-	// termux-exec keeps the caller's argv[0] and puts the path of the program
-	// after it: `coddy serve --daemon` becomes this.
+	// termux-exec runs the linker on the program's path, and Bionic starts
+	// main with the arguments after the linker's own.
 	s.kernelExe = "/apex/com.android.runtime/bin/linker64"
-	s.kernelArgs = append([]string{"coddy", s.coddyPath()}, strings.Fields(args)...)
+	s.args = append([]string{s.coddyPath()}, strings.Fields(args)...)
 	return nil
 }
 
-func (s *androidFeatureState) coddyReadsItsCommandLine() error {
-	args, self, ok := linkerLaunch(s.kernelExe, s.kernelArgs, filepath.Join(s.root, "files", "home"))
+func (s *androidFeatureState) coddyLooksForItsBinary() error {
+	self, ok := linkerSelf(s.kernelExe, s.args, filepath.Join(s.root, "files", "home"))
 	if !ok {
 		return fmt.Errorf("a launch through %s was not recognised", s.kernelExe)
 	}
-	s.args, s.self = args, self
+	s.self = self
 	return nil
 }
 
-func (s *androidFeatureState) itSeesTheArguments(want string) error {
-	if len(s.args) == 0 || s.args[0] != s.coddyPath() {
-		return fmt.Errorf("os.Args = %q, want the binary first", s.args)
-	}
+func (s *androidFeatureState) itKeepsItsArguments(want string) error {
 	if got := s.args[1:]; !slices.Equal(got, strings.Fields(want)) {
 		return fmt.Errorf("arguments = %q, want %q", got, strings.Fields(want))
 	}
 	return nil
 }
 
-func (s *androidFeatureState) itKnowsItsOwnPath() error {
+func (s *androidFeatureState) itFindsTheBinaryNotTheLinker() error {
 	if s.self != s.coddyPath() {
 		return fmt.Errorf("own path = %q, want %q", s.self, s.coddyPath())
 	}
@@ -234,35 +224,6 @@ func (s *androidFeatureState) envReceivesNodeAndTheScript() error {
 	return nil
 }
 
-func (s *androidFeatureState) resolvConfNames(server string) error {
-	if err := s.termuxTree(); err != nil {
-		return err
-	}
-	conf := "# written by the resolv-conf package\nnameserver " + server + "\n"
-	return os.WriteFile(filepath.Join(s.host.prefix, "etc", "resolv.conf"), []byte(conf), 0o644)
-}
-
-func (s *androidFeatureState) resolverQueriesItsDefault() error {
-	record := func(_ context.Context, _, address string) (net.Conn, error) {
-		s.query = address
-		return nil, errAndroidFeatureDial
-	}
-	var r net.Resolver
-	useNameservers(&r, termuxNameservers(s.host.prefix), record)
-	// Without /etc/resolv.conf the Go resolver asks 127.0.0.1:53 first.
-	if _, err := r.Dial(context.Background(), "udp", "127.0.0.1:53"); !errors.Is(err, errAndroidFeatureDial) {
-		return fmt.Errorf("dial error = %v, want the recorded dial", err)
-	}
-	return nil
-}
-
-func (s *androidFeatureState) queryGoesTo(want string) error {
-	if s.query != want {
-		return fmt.Errorf("query went to %q, want %q", s.query, want)
-	}
-	return nil
-}
-
 func TestAndroidTermuxFeature(t *testing.T) {
 	s := &androidFeatureState{}
 	t.Cleanup(s.reset)
@@ -274,9 +235,9 @@ func TestAndroidTermuxFeature(t *testing.T) {
 				return ctx, nil
 			})
 			sc.Step(`^the system linker started Coddy with the arguments "([^"]*)"$`, s.linkerStartedCoddyWith)
-			sc.Step(`^Coddy reads its command line$`, s.coddyReadsItsCommandLine)
-			sc.Step(`^it sees the arguments "([^"]*)"$`, s.itSeesTheArguments)
-			sc.Step(`^it knows the path of its own binary$`, s.itKnowsItsOwnPath)
+			sc.Step(`^Coddy looks for its own binary$`, s.coddyLooksForItsBinary)
+			sc.Step(`^it finds the binary the linker was given rather than the linker$`, s.itFindsTheBinaryNotTheLinker)
+			sc.Step(`^its arguments are still "([^"]*)"$`, s.itKeepsItsArguments)
 			sc.Step(`^the system linker started Coddy$`, s.linkerStartedCoddy)
 			sc.Step(`^the kernel started Coddy directly$`, s.kernelStartedCoddy)
 			sc.Step(`^bash is installed in the Termux prefix$`, s.bashIsInstalled)
@@ -288,9 +249,6 @@ func TestAndroidTermuxFeature(t *testing.T) {
 			sc.Step(`^the command runs the system linker on the env of the Termux prefix$`, s.runsTheLinkerOnEnv)
 			sc.Step(`^the command runs the env of the Termux prefix directly$`, s.runsEnvDirectly)
 			sc.Step(`^env receives node and the path of the script$`, s.envReceivesNodeAndTheScript)
-			sc.Step(`^the Termux resolv.conf names the nameserver "([^"]*)"$`, s.resolvConfNames)
-			sc.Step(`^the Go resolver queries its default nameserver$`, s.resolverQueriesItsDefault)
-			sc.Step(`^the query goes to "([^"]*)"$`, s.queryGoesTo)
 		},
 		Options: &godog.Options{
 			Format: "progress",

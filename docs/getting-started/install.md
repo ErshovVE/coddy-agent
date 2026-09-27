@@ -193,13 +193,14 @@ pkg install curl
 curl -fsSL https://coddy.dev/install.sh | bash
 ```
 
-In Termux the script fetches **`coddy_X.Y.Z_android_arm64.tar.gz`**, a build for Android on 64-bit
-ARM. The Linux archive does not start there: a Termux that targets Android 10 or later runs every
+In Termux the script fetches the build for Android, **`coddy_X.Y.Z_android_arm64.tar.gz`** on a
+64-bit ARM device and **`coddy_X.Y.Z_android_amd64.tar.gz`** on x86_64. The Linux archive does not
+start there: a Termux that targets Android 10 or later runs every
 program through Android's linker, which turns a static executable away with
 **`has unexpected e_type: 2`**. The rest of the install is the Linux one: **`~/.local/bin`**, the
 man page and the completions in **`~/.local/share`**, and the block in **`~/.bashrc`**. What differs
-on the device (the programs Coddy starts, name resolution, certificates, running
-**`coddy serve`** in the background) is on its own page: [Android (Termux)](android.md).
+on the device (the programs Coddy starts, certificates, running **`coddy serve`** in the background)
+is on its own page: [Android (Termux)](android.md).
 
 ## After install
 

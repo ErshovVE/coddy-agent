@@ -1,20 +1,19 @@
 Feature: Coddy on Android under Termux
-  The Android release is the Go binary built with GOOS=android: a position
-  independent executable that names Android's system linker as its
-  interpreter. Termux runs it directly where Android lets the app execute the
-  files in its data directory, and as `/system/bin/linker64 <path>` where it
-  does not, which is every device running a Termux that targets Android 10 or
-  later, such as the Google Play build. Coddy then does for the programs it
-  starts what termux-exec does for Termux's own: it runs them through the same
-  linker, and it finds the interpreters that scripts name by their Linux paths
-  in the Termux prefix. It resolves hostnames with the nameservers Termux
-  configures, because Android has no /etc/resolv.conf for the Go resolver.
+  The Android release is the Go binary built with GOOS=android for arm64 and
+  x86_64, linked by the NDK against Bionic: a position independent executable
+  that names Android's system linker as its interpreter. Termux runs it
+  directly where Android lets the app execute the files in its data directory,
+  and as `/system/bin/linker64 <path>` where it does not, which is every device
+  running a Termux that targets Android 10 or later, such as the Google Play
+  build. Coddy then does for the programs it starts what termux-exec does for
+  Termux's own: it runs them through the same linker, and it finds the
+  interpreters that scripts name by their Linux paths in the Termux prefix.
 
-  Scenario: Reading its own arguments when the system linker started Coddy
+  Scenario: Knowing its own binary when the system linker started Coddy
     Given the system linker started Coddy with the arguments "serve --daemon"
-    When Coddy reads its command line
-    Then it sees the arguments "serve --daemon"
-    And it knows the path of its own binary
+    When Coddy looks for its own binary
+    Then it finds the binary the linker was given rather than the linker
+    And its arguments are still "serve --daemon"
 
   Scenario: Running a shell command when Termux starts programs through the linker
     Given the system linker started Coddy
@@ -36,8 +35,3 @@ Feature: Coddy on Android under Termux
     When Coddy starts npx for an MCP server
     Then the command runs the env of the Termux prefix directly
     And env receives node and the path of the script
-
-  Scenario: Resolving hostnames with the nameservers Termux configures
-    Given the Termux resolv.conf names the nameserver "1.1.1.1"
-    When the Go resolver queries its default nameserver
-    Then the query goes to "1.1.1.1:53"

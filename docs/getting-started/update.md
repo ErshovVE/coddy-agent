@@ -15,6 +15,7 @@ CI publishes one archive per platform on each SemVer tag **`X.Y.Z`**, plus Linux
 | **`coddy_X.Y.Z_linux_amd64.tar.gz`** | Linux x86_64 |
 | **`coddy_X.Y.Z_linux_arm64.tar.gz`** | Linux arm64 |
 | **`coddy_X.Y.Z_android_arm64.tar.gz`** | Android arm64, under Termux ([Android](android.md)) |
+| **`coddy_X.Y.Z_android_amd64.tar.gz`** | Android x86_64, under Termux |
 | **`coddy_X.Y.Z_windows_amd64.zip`** | Windows x86_64 (**`coddy.exe`**) |
 | **`coddy_X.Y.Z_darwin_amd64.tar.gz`** | macOS Intel |
 | **`coddy_X.Y.Z_darwin_arm64.tar.gz`** | macOS Apple Silicon |

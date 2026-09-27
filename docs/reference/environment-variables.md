@@ -77,11 +77,11 @@ MCP servers started over stdio get Coddy's environment plus the `env` map of the
 
 ## Android (Termux)
 
-Read by the Android build only (`internal/platform/android.go`, `android_init.go`, `android_dns.go`), where Termux exports them. None needs setting by hand.
+Read by the Android build only (`internal/platform/android.go`, `android_init.go`), where Termux exports them. None needs setting by hand.
 
 | Variable | Read by | Meaning | Documented in |
 |---|---|---|---|
-| `TERMUX__PREFIX`, `PREFIX` | `internal/platform/android.go` | The Termux prefix, the first of the two that holds an absolute path; default `/data/data/com.termux/files/usr`. Coddy takes `etc/resolv.conf`, `etc/tls/cert.pem`, `tmp` from it, and the programs of its `bin` for a `/bin/...` or `/usr/bin/...` path. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |
+| `TERMUX__PREFIX`, `PREFIX` | `internal/platform/android.go` | The Termux prefix, the first of the two that holds an absolute path; default `/data/data/com.termux/files/usr`. Coddy takes `etc/tls/cert.pem` and `tmp` from it, and the programs of its `bin` for a `/bin/...` or `/usr/bin/...` path. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |
 | `TERMUX_APP__DATA_DIR`, `TERMUX_APP__LEGACY_DATA_DIR` | `internal/platform/android.go` | The app data directory under both its names. A program under it is started through `/system/bin/linker64` when Coddy itself was; without the variables, the directory the prefix sits in stands for it. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |
 | `SSL_CERT_FILE` | Go's `crypto/x509` | Set to `$PREFIX/etc/tls/cert.pem` when unset and the file exists, so the Termux CA bundle is trusted next to Android's store. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |
 | `TMPDIR` | Go's `os.TempDir` | Set to `$PREFIX/tmp` when unset: Go's Android default, `/data/local/tmp`, is not writable by an app. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |

@@ -2,10 +2,7 @@ package platform
 
 import (
 	"bytes"
-	"context"
 	"io"
-	"net"
-	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,27 +14,24 @@ import (
 
 // Android (Termux) support.
 //
-// The Android release is this module built with GOOS=android and no cgo: a
-// position-independent executable naming Android's system linker as its
-// interpreter. That is the one shape Termux can start where the app may not
-// execute the files of its own data directory - Android 10 and later, for a
-// Termux that targets them, such as the Google Play build. There termux-exec
-// runs every program as `/system/bin/linker64 <path> args`, and the linker
-// refuses the static Linux build with `has unexpected e_type: 2`.
+// The Android release is this module built with GOOS=android and cgo, linked
+// by the NDK against Bionic, for arm64 and x86_64: a position-independent
+// executable naming Android's system linker as its interpreter. That is the
+// one shape Termux can start where the app may not execute the files of its
+// own data directory - Android 10 and later, for a Termux that targets them,
+// such as the Google Play build. There termux-exec runs every program as
+// `/system/bin/linker64 <path> args`, and the linker refuses the static Linux
+// build with `has unexpected e_type: 2`. Bionic gives such a program what libc
+// gives any: its own arguments and the system's resolver.
 //
-// Termux patches its own Go packages for what a Go program meets on Android.
-// A binary built outside Termux carries none of those patches, so this file
-// makes the same adjustments at run time:
+// Termux patches its own Go packages for the rest, and a binary built outside
+// Termux carries none of those patches, so this file makes the same
+// adjustments at run time:
 //
-//   - Started through the linker, a Go program reads the linker's arguments:
-//     Bionic hides the extra one from main, but Go does not go through
-//     Bionic. The android init drops it (linkerLaunch) and remembers the path
-//     of the binary, which /proc/self/exe no longer names (Executable).
 //   - Go starts a program with the execve system call, which termux-exec
 //     cannot intercept. AdaptCommand does what it would have done.
-//   - Without cgo the Go resolver reads /etc/resolv.conf, which Android does
-//     not have, and asks 127.0.0.1:53, where nothing listens. The resolver is
-//     pointed at the nameservers of Termux's resolv.conf (useNameservers).
+//   - Started through the linker, /proc/self/exe names the linker; the
+//     android init keeps the path of the binary for Executable.
 //   - Root certificates and the temporary directory are looked up where
 //     Termux keeps them (useTermuxFiles).
 
@@ -57,9 +51,6 @@ const (
 	// shebangMax is how much of a file the kernel reads for its #! line.
 	shebangMax = 256
 )
-
-// fallbackNameservers are the servers Termux's resolv-conf package ships with.
-var fallbackNameservers = []string{"8.8.8.8:53", "8.8.4.4:53"}
 
 // Set by the android init when the system linker started this process.
 var (
@@ -166,22 +157,20 @@ func isSystemLinker(path string) bool {
 	return strings.HasPrefix(path, "/system/") || strings.HasPrefix(path, "/apex/")
 }
 
-// linkerLaunch recognises a process the system linker started as a program:
-// exe is what /proc/self/exe names and args are the arguments the kernel
-// handed over. termux-exec runs `/system/bin/linker64` with the caller's
-// argv[0], the path of the program and the program's arguments, and a Go
-// program reads all of them. linkerLaunch returns the arguments the program
-// should see - its path, then its own arguments - the path, absolute, and
-// whether the linker started it at all.
-func linkerLaunch(exe string, args []string, cwd string) ([]string, string, bool) {
-	if !isSystemLinker(exe) || len(args) < 2 || args[1] == "" {
-		return args, "", false
+// linkerSelf recognises a process the system linker started as a program and
+// returns the path of that program: exe is what /proc/self/exe names, the
+// linker then, and args are the arguments Bionic passed to main, which start
+// with the path the linker was given - termux-exec gives it the absolute one.
+// A relative path is taken from cwd.
+func linkerSelf(exe string, args []string, cwd string) (string, bool) {
+	if !isSystemLinker(exe) || len(args) == 0 || args[0] == "" {
+		return "", false
 	}
-	self := args[1]
+	self := args[0]
 	if !filepath.IsAbs(self) {
 		self = filepath.Join(cwd, self)
 	}
-	return args[1:], filepath.Clean(self), true
+	return filepath.Clean(self), true
 }
 
 // useTermuxFiles points what the Go runtime looks for at Linux paths to
@@ -200,64 +189,6 @@ func useTermuxFiles(prefix string, getenv func(string) string, setenv func(strin
 			_ = setenv("TMPDIR", tmp)
 		}
 	}
-}
-
-// termuxNameservers returns the nameservers of the prefix's resolv.conf, the
-// file every resolver in Termux reads, or the servers that file ships with
-// when it is missing or names none.
-func termuxNameservers(prefix string) []string {
-	if data, err := os.ReadFile(filepath.Join(prefix, "etc", "resolv.conf")); err == nil {
-		if servers := parseNameservers(data); len(servers) > 0 {
-			return servers
-		}
-	}
-	return slices.Clone(fallbackNameservers)
-}
-
-// parseNameservers returns host:port for every nameserver line of a
-// resolv.conf that names an IP address.
-func parseNameservers(data []byte) []string {
-	var servers []string
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] != "nameserver" {
-			continue
-		}
-		addr, err := netip.ParseAddr(fields[1])
-		if err != nil {
-			continue
-		}
-		servers = append(servers, net.JoinHostPort(addr.String(), "53"))
-	}
-	return servers
-}
-
-// dialFunc is the signature of net.Resolver.Dial.
-type dialFunc func(ctx context.Context, network, address string) (net.Conn, error)
-
-// useNameservers makes r send the queries the Go resolver addresses to its
-// built-in defaults - 127.0.0.1:53 and [::1]:53, all it has without
-// /etc/resolv.conf - to servers, through dial.
-func useNameservers(r *net.Resolver, servers []string, dial dialFunc) {
-	if len(servers) == 0 {
-		return
-	}
-	r.PreferGo = true
-	r.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
-		return dial(ctx, network, nameserverFor(address, servers))
-	}
-}
-
-// nameserverFor maps one of the Go resolver's default nameservers to the
-// configured one in its place; any other address stays.
-func nameserverFor(address string, servers []string) string {
-	switch address {
-	case "127.0.0.1:53":
-		return servers[0]
-	case "[::1]:53":
-		return servers[1%len(servers)]
-	}
-	return address
 }
 
 // adapt rewrites cmd for the device; see AdaptCommand. A command it cannot

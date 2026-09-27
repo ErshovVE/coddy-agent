@@ -75,15 +75,17 @@ build:
 
 # ---- Android (Termux) ----
 #
-# The Android build is the same sources with GOOS=android and no cgo. Go links
-# android/arm64 on its own, into a position-independent executable that names
-# the Android system linker as its interpreter: the one shape Termux can start
-# where it runs programs as `/system/bin/linker64 <path>`, which is Android 10
-# and later for a Termux that targets them (the Google Play build). The static
-# GOOS=linux binary is refused there with `has unexpected e_type: 2`. The other
-# Android architectures need the NDK to link and are not built. TAGS works as
-# for `build`. See docs/getting-started/android.md.
-ANDROID_BINARY := $(BUILD_DIR)/coddy-android-arm64
+# The Android build is linked with cgo by the NDK against Bionic, for arm64 and
+# x86_64: a position-independent executable naming the Android system linker
+# as its interpreter, which is the one shape Termux can start where it runs
+# programs as `/system/bin/linker64 <path>` (Android 10 and later for a Termux
+# that targets them, the Google Play build). The static GOOS=linux binary is
+# refused there with `has unexpected e_type: 2`. Bionic gives the binary the
+# system's resolver and its own arguments; a build without cgo gets neither,
+# and internal/platform/android_nocgo.go stops it. scripts/android-cc.sh finds
+# the NDK (ANDROID_NDK_HOME, or the newest one in the SDK). TAGS works as for
+# `build`. See docs/getting-started/android.md.
+ANDROID_ARCHS ?= arm64 amd64
 
 ifneq ($(and $(findstring http,$(TAGS)),$(findstring ui,$(TAGS))),)
 android: ui-build
@@ -91,7 +93,11 @@ endif
 
 android:
 	@mkdir -p $(BUILD_DIR)
-	GOOS=android GOARCH=arm64 CGO_ENABLED=0 go build $(GO_TAGS_FLAG) -ldflags "$(LDFLAGS)" -o $(ANDROID_BINARY) ./cmd/coddy/
+	@set -e; for arch in $(ANDROID_ARCHS); do \
+		cc=$$(scripts/android-cc.sh $$arch); \
+		echo "GOOS=android GOARCH=$$arch CGO_ENABLED=1 CC=$$cc go build -o $(BUILD_DIR)/coddy-android-$$arch"; \
+		GOOS=android GOARCH=$$arch CGO_ENABLED=1 CC=$$cc go build $(GO_TAGS_FLAG) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/coddy-android-$$arch ./cmd/coddy/; \
+	done
 
 # Print the same version string embedded by `make build` (for manual go build -ldflags).
 print-version:
@@ -360,13 +366,14 @@ check-windows:
 
 # Type-check the Android build without a device, test files included.
 #
-# internal/platform has files only GOOS=android compiles - the Termux
-# adjustments in android_init.go and android_dns.go - so the host suite and
-# linter never see them, the way check-windows covers the Windows half. The
-# ui tag is left out for the same reason as there.
+# internal/platform has files only GOOS=android compiles - android_init.go and
+# the cgo guard - so the host suite and linter never see them, the way
+# check-windows covers the Windows half. The build is cgo, so this needs the
+# NDK too. The ui tag is left out for the same reason as there.
 check-android:
-	GOOS=android GOARCH=arm64 CGO_ENABLED=0 go vet ./...
-	GOOS=android GOARCH=arm64 CGO_ENABLED=0 go vet -tags=$(LINT_TAGS_NO_UI_CSV) ./...
+	GOOS=android GOARCH=arm64 CGO_ENABLED=1 CC=$$(scripts/android-cc.sh arm64) go vet ./...
+	GOOS=android GOARCH=arm64 CGO_ENABLED=1 CC=$$(scripts/android-cc.sh arm64) go vet -tags=$(LINT_TAGS_NO_UI_CSV) ./...
+	GOOS=android GOARCH=amd64 CGO_ENABLED=1 CC=$$(scripts/android-cc.sh amd64) go vet -tags=$(LINT_TAGS_NO_UI_CSV) ./...
 
 # Clean build artifacts.
 clean:

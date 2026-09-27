@@ -223,12 +223,13 @@ jobs:
       - name: Type-check the Windows build
         run: make check-windows
 
-  # The Android build is GOOS=android, which the Linux suite never compiles:
-  # internal/platform has files only it builds, the Termux adjustments. This job
-  # type-checks that half, builds the binary the release publishes, checks that
-  # it is the position-independent executable the Android system linker loads
-  # rather than a static one Termux refuses, and keeps it as an artifact to try
-  # on a device before the release.
+  # The Android build is GOOS=android with cgo, linked by the NDK the runner
+  # carries, which the Linux suite never compiles: internal/platform has files
+  # only it builds. This job type-checks that half, builds the binaries the
+  # release publishes, checks that each is a position-independent executable
+  # the Android system linker loads and that it needs no library beyond
+  # Android's own, and keeps them as artifacts to try on a device before the
+  # release.
   cross-build-android:
     name: Android cross-build
     runs-on: ubuntu-latest
@@ -253,29 +254,41 @@ jobs:
       - name: Type-check the Android build
         run: make check-android
 
-      - name: Build the Android binary with the release tag set
+      - name: Build the Android binaries with the release tag set
         run: make android TAGS="$(make -s print-full-tags | tr , ' ')"
 
-      - name: Check it is what the Android linker loads
+      - name: Check they are what the Android linker loads
         run: |
-          bin=build/coddy-android-arm64
-          file "$bin"
-          LC_ALL=C readelf -h "$bin" | grep -q 'Type:.*DYN' || { echo "::error::$bin is not position-independent"; exit 1; }
-          LC_ALL=C readelf -l "$bin" | grep -q 'program interpreter: /system/bin/linker64' || { echo "::error::$bin does not name the Android linker"; exit 1; }
-          if LC_ALL=C readelf -d "$bin" | grep -q NEEDED; then echo "::error::$bin needs shared libraries"; exit 1; fi
+          for arch in arm64 amd64; do
+            bin="build/coddy-android-$arch"
+            file "$bin"
+            LC_ALL=C readelf -h "$bin" | grep -q 'Type:.*DYN' || { echo "::error::$bin is not position-independent"; exit 1; }
+            LC_ALL=C readelf -l "$bin" | grep -q 'program interpreter: /system/bin/linker64' || { echo "::error::$bin does not name the Android linker"; exit 1; }
+            extra=$(LC_ALL=C readelf -d "$bin" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | grep -v -x -E 'libc\.so|libdl\.so|libm\.so|liblog\.so' || true)
+            if [ -n "$extra" ]; then echo "::error::$bin needs libraries Android does not ship: $extra"; exit 1; fi
+          done
 
-      - name: Pack it the way the release does
+      - name: Pack them the way the release does
         run: |
-          mkdir -p dist/android
-          cp build/coddy-android-arm64 dist/android/coddy
-          cp packaging/man/coddy.1 packaging/completions/coddy.bash packaging/completions/coddy.zsh dist/android/
-          tar -C dist/android -czf dist/coddy_android_arm64.tar.gz coddy coddy.1 coddy.bash coddy.zsh
+          for arch in arm64 amd64; do
+            mkdir -p "dist/android-$arch"
+            cp "build/coddy-android-$arch" "dist/android-$arch/coddy"
+            cp packaging/man/coddy.1 packaging/completions/coddy.bash packaging/completions/coddy.zsh "dist/android-$arch/"
+            tar -C "dist/android-$arch" -czf "dist/coddy_android_$arch.tar.gz" coddy coddy.1 coddy.bash coddy.zsh
+          done
 
-      - name: Keep the archive
+      - name: Keep the arm64 archive
         uses: actions/upload-artifact@v4
         with:
           name: coddy-android-arm64
           path: dist/coddy_android_arm64.tar.gz
+          retention-days: 14
+
+      - name: Keep the x86_64 archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: coddy-android-amd64
+          path: dist/coddy_android_amd64.tar.gz
           retention-days: 14
 
   # Cross-building proves the Windows code compiles, not that it works. These

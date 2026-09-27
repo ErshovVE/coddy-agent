@@ -7,8 +7,6 @@
 package platform
 
 import (
-	"context"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,34 +33,29 @@ func TestIsSystemLinker(t *testing.T) {
 	}
 }
 
-func TestLinkerLaunch(t *testing.T) {
+func TestLinkerSelf(t *testing.T) {
 	const bin = "/data/data/com.termux/files/home/.local/bin/coddy"
-	t.Run("started by the kernel", func(t *testing.T) {
-		args := []string{"coddy", "-v"}
-		got, self, ok := linkerLaunch(bin, args, "/")
-		if ok || self != "" || !slices.Equal(got, args) {
-			t.Fatalf("linkerLaunch = %q, %q, %v; want the arguments untouched", got, self, ok)
-		}
-	})
-	t.Run("started by hand as linker64 PROGRAM", func(t *testing.T) {
-		got, self, ok := linkerLaunch("/system/bin/linker64", []string{"/system/bin/linker64", bin, "-v"}, "/")
-		if !ok || self != bin || !slices.Equal(got, []string{bin, "-v"}) {
-			t.Fatalf("linkerLaunch = %q, %q, %v", got, self, ok)
-		}
-	})
-	t.Run("a relative program path is taken from the working directory", func(t *testing.T) {
-		got, self, ok := linkerLaunch("/system/bin/linker64", []string{"coddy", "./coddy"}, "/data/data/com.termux/files/home")
-		want := "/data/data/com.termux/files/home/coddy"
-		if !ok || self != want || !slices.Equal(got, []string{"./coddy"}) {
-			t.Fatalf("linkerLaunch = %q, %q, %v; want self %q", got, self, ok, want)
-		}
-	})
-	t.Run("the linker alone runs nothing", func(t *testing.T) {
-		args := []string{"/system/bin/linker64"}
-		if got, _, ok := linkerLaunch("/system/bin/linker64", args, "/"); ok || !slices.Equal(got, args) {
-			t.Fatalf("linkerLaunch = %q, %v; want no launch", got, ok)
-		}
-	})
+	const linker = "/apex/com.android.runtime/bin/linker64"
+	cases := []struct {
+		name string
+		exe  string
+		args []string
+		self string
+		ok   bool
+	}{
+		{name: "started by the kernel", exe: bin, args: []string{"coddy", "-v"}},
+		{name: "started through the linker by termux-exec", exe: linker, args: []string{bin, "-v"}, self: bin, ok: true},
+		{name: "started by hand as linker64 ./coddy", exe: "/system/bin/linker64", args: []string{"./coddy"}, self: "/data/data/com.termux/files/home/coddy", ok: true},
+		{name: "no arguments at all", exe: linker, args: nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			self, ok := linkerSelf(tc.exe, tc.args, "/data/data/com.termux/files/home")
+			if ok != tc.ok || self != tc.self {
+				t.Fatalf("linkerSelf = %q, %v; want %q, %v", self, ok, tc.self, tc.ok)
+			}
+		})
+	}
 }
 
 func TestTermuxPrefix(t *testing.T) {
@@ -100,72 +93,6 @@ func TestTermuxAppDataDirs(t *testing.T) {
 	got = termuxAppDataDirs(func(string) string { return "" }, "/data/data/com.termux.nightly/files/usr")
 	if !slices.Equal(got, []string{"/data/data/com.termux.nightly"}) {
 		t.Fatalf("termuxAppDataDirs without the variables = %q", got)
-	}
-}
-
-func TestParseNameservers(t *testing.T) {
-	conf := `# resolv-conf
-; another comment
-nameserver 1.1.1.1
-nameserver   2606:4700:4700::1111
-nameserver fe80::1%wlan0
-nameserver not-an-address
-nameserver
-search lan
-options timeout:2
-`
-	want := []string{"1.1.1.1:53", "[2606:4700:4700::1111]:53", "[fe80::1%wlan0]:53"}
-	if got := parseNameservers([]byte(conf)); !slices.Equal(got, want) {
-		t.Fatalf("parseNameservers = %q, want %q", got, want)
-	}
-}
-
-func TestTermuxNameserversFallBackToTermuxDefaults(t *testing.T) {
-	prefix := t.TempDir()
-	if got := termuxNameservers(prefix); !slices.Equal(got, []string{"8.8.8.8:53", "8.8.4.4:53"}) {
-		t.Fatalf("without resolv.conf: %q", got)
-	}
-	if err := os.MkdirAll(filepath.Join(prefix, "etc"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(prefix, "etc", "resolv.conf"), []byte("options rotate\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got := termuxNameservers(prefix); !slices.Equal(got, []string{"8.8.8.8:53", "8.8.4.4:53"}) {
-		t.Fatalf("with no nameserver line: %q", got)
-	}
-}
-
-func TestNameserverFor(t *testing.T) {
-	two := []string{"9.9.9.9:53", "149.112.112.112:53"}
-	for address, want := range map[string]string{
-		"127.0.0.1:53": "9.9.9.9:53",
-		"[::1]:53":     "149.112.112.112:53",
-		"10.0.0.1:53":  "10.0.0.1:53",
-	} {
-		if got := nameserverFor(address, two); got != want {
-			t.Errorf("nameserverFor(%q) = %q, want %q", address, got, want)
-		}
-	}
-	one := []string{"1.1.1.1:53"}
-	if got := nameserverFor("[::1]:53", one); got != "1.1.1.1:53" {
-		t.Errorf("one server answers both defaults, got %q", got)
-	}
-}
-
-func TestUseNameserversKeepsTheNetwork(t *testing.T) {
-	var network string
-	var r net.Resolver
-	useNameservers(&r, []string{"1.1.1.1:53"}, func(_ context.Context, n, _ string) (net.Conn, error) {
-		network = n
-		return nil, net.ErrClosed
-	})
-	if !r.PreferGo {
-		t.Fatal("the resolver must use the Go implementation that calls Dial")
-	}
-	_, _ = r.Dial(context.Background(), "tcp", "[::1]:53")
-	if network != "tcp" {
-		t.Fatalf("network = %q, want the one the resolver asked for", network)
 	}
 }
 

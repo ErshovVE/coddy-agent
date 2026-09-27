@@ -280,14 +280,14 @@ A copy under `~/.local/bin` or a build of your own is untouched by any of this a
 
 **Cause.** That is the Linux build. A Termux that targets Android 10 or later starts every program through Android's linker, which loads position-independent executables only, and the Linux build is a static one. Where Termux starts it directly, it looks for certificates and for `/etc/resolv.conf` at Linux paths Android does not have, and some Android versions forbid a system call it makes.
 
-**Fix.** Install the Android build, `coddy_X.Y.Z_android_arm64.tar.gz`, which the install script picks in Termux. Running the script again replaces the Linux binary in place:
+**Fix.** Install the Android build, `coddy_X.Y.Z_android_arm64.tar.gz` (or `_amd64` on x86_64), which the install script picks in Termux. Running the script again replaces the Linux binary in place:
 
 ```bash
 curl -fsSL https://coddy.dev/install.sh | bash
 coddy -v
 ```
 
-With the Android build, a host that still does not resolve means the nameservers of `$PREFIX/etc/resolv.conf` are not reachable from the current network; put ones that are. See [Android (Termux)](android.md).
+In a Termux session that was open during the install, `coddy` is found only after `source ~/.bashrc` or in a new session. See [Android (Termux)](android.md).
 
 ## Windows notes
 
