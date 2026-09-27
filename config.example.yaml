@@ -96,7 +96,7 @@ models:
   - model: "openai/gpt-5.6-terra"
     max_tokens: 8192
     reasoning_default: medium     # a reasoning model takes a level, not a temperature
-    multimodal: true              # model accepts image/file inputs; UI shows file attachment button
+    multimodal: true              # model accepts image/file inputs; UI shows file attachment button; offers view_image
 
   # Reasoning models expose a reasoning-level selector in the composer.
   # Levels are auto-detected from the model id (gpt-5*/gpt-6* -> minimal,low,medium,high;
