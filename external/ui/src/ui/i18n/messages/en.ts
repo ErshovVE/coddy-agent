@@ -141,6 +141,10 @@ export const messagesEn: Record<string, string> = {
   "settings.item.models": "Model settings",
   "settings.array.backTitle": "Back to list",
   "settings.array.empty": "Nothing here yet. Use Add to create one.",
+  "settings.map.namePlaceholder": "Name",
+  "settings.map.valuePlaceholder": "Value",
+  "settings.map.nameAria": "{label} {n}: name",
+  "settings.map.valueAria": "{label} {n}: value",
 
   "settings.field.apiBaseFallback": "API base URL",
   "settings.field.modelIdFallback": "Model id",
@@ -372,6 +376,15 @@ export const messagesEn: Record<string, string> = {
   "settings.schema.tools.preview_server.public_host.ph": "The bind host",
   "settings.schema.tools.websearch.brave_api_key.ph": "Read from BRAVE_API_KEY",
   "settings.schema.tools.websearch.searxng_url.ph": "http://localhost:8888",
+  "settings.schema.tools.http_request.label": "HTTP requests",
+  "settings.schema.tools.http_request.desc":
+    "Policy of the http_request tool, the agent's curl: where it goes without asking and the headers every request sends. Under ask and accept_edits a request asks unless its destination is allowed here or was approved in the session; bypass never asks.",
+  "settings.schema.tools.http_request.allowlist.label": "Allowlist",
+  "settings.schema.tools.http_request.allowlist.desc":
+    'Destinations reached without asking: a host (api.github.com), *.example.com, an origin (http://localhost:8080) or an address prefix (https://api.example.com/v1/); "*" allows all. Covers uploads and an unchecked certificate; a proxy needs its own entry, and a saved response follows the write policy.',
+  "settings.schema.tools.http_request.default_headers.label": "Default headers",
+  "settings.schema.tools.http_request.default_headers.desc":
+    "Headers every request sends unless the call names them itself, such as a browser User-Agent for a site that turns tools away. A call's own headers win, and an empty value leaves a header out. They go to every destination, so keep credentials out unless that is the intent; Host, Content-Type, Content-Length, Transfer-Encoding, the hop-by-hop headers and Proxy-Authorization are refused, and webfetch and the model providers never send these.",
 
   "settings.schema.subagents.desc":
     "User-defined child agents the model can delegate to with spawn_agent. Definitions are markdown files with YAML frontmatter; each run is a background task of the parent session with its own child session and transcript.",
@@ -989,7 +1002,8 @@ export const messagesEn: Record<string, string> = {
   "sessions.tags.add": "Add a tag",
   "sessions.tags.failed": "The tags were not saved",
   "sessions.archiveFailed": "The conversation was not archived",
-  "sessions.unarchiveFailed": "The conversation was not taken out of the archive",
+  "sessions.unarchiveFailed":
+    "The conversation was not taken out of the archive",
   "sessions.tags.editRow": "Edit the tags",
   "sessions.tags.done": "Done",
   "sessions.tagFilterClear": "Clear the tag filter",
@@ -1061,7 +1075,8 @@ export const messagesEn: Record<string, string> = {
   "composer.queueModeSteer": "Steer",
   "composer.queueModeAfterTurn": "After turn",
   "composer.queueChoiceLabel": "Choose the default queue mode",
-  "composer.queueChoiceQuestion": "When a turn is running, how should Enter send your message?",
+  "composer.queueChoiceQuestion":
+    "When a turn is running, how should Enter send your message?",
   "composer.queueChoiceSteer": "Steer now",
   "composer.queueChoiceAfterTurn": "After this turn",
   "composer.queueModeSteerTitle":
@@ -1485,12 +1500,14 @@ export const messagesEn: Record<string, string> = {
   "structuredTool.noTasks": "No background tasks",
   "structuredTool.noLeftovers": "No processes left over from an earlier run",
   "structuredTool.stillRunning": "Still running after a {seconds}s wait",
-  "structuredTool.earlierDropped": "Earlier output was dropped; the full log is in the session bundle",
+  "structuredTool.earlierDropped":
+    "Earlier output was dropped; the full log is in the session bundle",
   "structuredTool.noOutput": "No output yet",
   "structuredTool.stops": "Stops",
   "structuredTool.stopsAfter": "{seconds}s after it started",
   "structuredTool.stopsManually": "when it is stopped",
-  "structuredTool.alreadyRunning": "The server for this folder was already running",
+  "structuredTool.alreadyRunning":
+    "The server for this folder was already running",
   "structuredTool.noDocsHits": "No section matches",
   "structuredTool.docsContents": "Documentation contents",
   "structuredTool.docsLines": "lines {from}-{to} of {total}",

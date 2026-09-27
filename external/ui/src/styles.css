@@ -7972,6 +7972,14 @@ html:not([data-theme="light"]) .context-usage-note--error {
   flex: 0 0 auto;
 }
 
+/* A map row (tools.http_request.default_headers): the name and the value side
+   by side in the field block, the value wider; each is the list's bare input. */
+.settings-map-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 8px;
+}
+
 /* --- Tabbed settings layout: vertical nav + content (desktop), horizontal tab strip (mobile) --- */
 .settings-tabs-layout {
   flex: 1 1 auto;
@@ -14379,6 +14387,18 @@ html:not([data-theme="light"]) .swarm-graph-panel {
 
   .mcp-list-item-text {
     flex-basis: calc(100% - var(--mcp-row-inset));
+  }
+
+  /* Settings maps (the default headers): a name and a value side by side left
+     the name 82px at 390px, User-Agent cut to "User-Ag". The value goes under
+     the name, the trash stays beside the pair, and the pairs stand further
+     apart than the two fields of one pair. */
+  .settings-map-entry {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-map {
+    gap: 16px;
   }
 }
 

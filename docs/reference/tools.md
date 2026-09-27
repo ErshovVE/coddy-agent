@@ -56,7 +56,7 @@ The `background_*` tools are registered only while `tools.background` is enabled
 
 `websearch` asks the engines named in `tools.websearch.engines` (Brave then Bing by default) and reports each one's outcome next to the results, so an engine that answered a challenge page is named rather than counted as nothing found; a search where every engine was turned away fails instead of returning an empty list. Which engines exist, how the relevance gate discards an unrelated result set, and how to point it at your own SearXNG: [Web search](../features/web-search.md).
 
-`http_request` is the tool for everything else over HTTP: APIs, services on localhost, uploads and downloads. It refuses no address, which is why it is gated; `webfetch` shares its client and differs in the SSRF guard, the fixed `GET` and the Markdown conversion ([HTTP requests](../features/http-requests.md#webfetch-on-the-same-client)).
+`http_request` is the tool for everything else over HTTP: APIs, services on localhost, uploads and downloads. It refuses no address, which is why it is gated; `webfetch` shares its client and differs in the SSRF guard, the fixed `GET` and the Markdown conversion ([HTTP requests](../features/http-requests.md#webfetch-on-the-same-client)). Headers the operator wants on every request, such as a browser `User-Agent`, go into `tools.http_request.default_headers`, which only `http_request` sends and a call's own `headers` override ([Default headers](../features/http-requests.md#default-headers)).
 
 ## Interaction, skills and subagents
 

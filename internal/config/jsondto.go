@@ -213,9 +213,12 @@ type ToolWebSearchJSON struct {
 	BraveAPIKey          string   `json:"brave_api_key,omitempty"`
 }
 
-// ToolHTTPRequestJSON mirrors ToolHTTPRequest for JSON APIs.
+// ToolHTTPRequestJSON mirrors ToolHTTPRequest for JSON APIs. DefaultHeaders
+// travels both ways, like brave_api_key: the settings screen edits the headers,
+// and config_get is what keeps their values from the model.
 type ToolHTTPRequestJSON struct {
-	Allowlist []string `json:"allowlist,omitempty"`
+	Allowlist      []string          `json:"allowlist,omitempty"`
+	DefaultHeaders map[string]string `json:"default_headers,omitempty"`
 }
 
 // ToolBackgroundJSON mirrors ToolBackground for JSON APIs.
@@ -545,7 +548,8 @@ func ConfigToJSONDTO(c *Config) *ConfigJSON {
 			PublicHost: c.Tools.PreviewServer.PublicHost,
 		},
 		HTTPRequest: ToolHTTPRequestJSON{
-			Allowlist: append([]string(nil), c.Tools.HTTPRequest.Allowlist...),
+			Allowlist:      append([]string(nil), c.Tools.HTTPRequest.Allowlist...),
+			DefaultHeaders: cloneStringMap(c.Tools.HTTPRequest.DefaultHeaders),
 		},
 	}
 	out.Logger = LoggerJSON{
@@ -773,7 +777,8 @@ func JSONDTOToConfig(j *ConfigJSON, paths Paths) *Config {
 			PublicHost: j.Tools.PreviewServer.PublicHost,
 		},
 		HTTPRequest: ToolHTTPRequest{
-			Allowlist: append([]string(nil), j.Tools.HTTPRequest.Allowlist...),
+			Allowlist:      append([]string(nil), j.Tools.HTTPRequest.Allowlist...),
+			DefaultHeaders: cloneStringMap(j.Tools.HTTPRequest.DefaultHeaders),
 		},
 	}
 	cfg.Logger = Logger{
