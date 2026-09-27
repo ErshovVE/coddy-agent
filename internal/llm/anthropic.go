@@ -271,7 +271,7 @@ func (p *anthropicProvider) splitMessages(messages []Message) (string, []anthrop
 
 		switch m.Role {
 		case RoleUser:
-			result = append(result, anthropic.NewUserMessage(anthropic.NewTextBlock(m.Content)))
+			result = append(result, anthropic.NewUserMessage(anthropicUserBlocks(m)...))
 
 		case RoleAssistant:
 			var blocks []anthropic.ContentBlockParamUnion
@@ -302,6 +302,38 @@ func (p *anthropicProvider) splitMessages(messages []Message) (string, []anthrop
 	}
 
 	return system, result
+}
+
+// anthropicUserBlocks is a user message as the Messages API takes it: the
+// text, with every attached file that is not a picture appended as a labelled
+// block the way the other providers carry it, then the pictures as image
+// blocks - base64 data from a data URL, an https address as it is. A message
+// of pictures alone sends no empty text block, which the API refuses.
+func anthropicUserBlocks(m Message) []anthropic.ContentBlockParamUnion {
+	text := m.Content
+	var images []anthropic.ContentBlockParamUnion
+	for _, ip := range m.ImageParts {
+		mime := dataURLMIME(ip.DataURL)
+		if strings.HasPrefix(mime, "image/") {
+			if comma := strings.IndexByte(ip.DataURL, ','); comma > 0 && strings.Contains(ip.DataURL[:comma], ";base64") {
+				images = append(images, anthropic.NewImageBlockBase64(mime, ip.DataURL[comma+1:]))
+			}
+			continue
+		}
+		if !strings.HasPrefix(ip.DataURL, "data:") && strings.HasPrefix(ip.DataURL, "https://") {
+			images = append(images, anthropic.NewImageBlock(anthropic.URLImageSourceParam{URL: ip.DataURL}))
+			continue
+		}
+		label := ip.Name
+		if label == "" {
+			label = "file"
+		}
+		text += fmt.Sprintf("\n\n[File: %s]\n%s", label, decodeDataURL(ip.DataURL))
+	}
+	if text == "" && len(images) > 0 {
+		return images
+	}
+	return append([]anthropic.ContentBlockParamUnion{anthropic.NewTextBlock(text)}, images...)
 }
 
 func (p *anthropicProvider) buildParams(system string, messages []anthropic.MessageParam, tools []ToolDefinition) anthropic.MessageNewParams {
