@@ -1404,6 +1404,8 @@ export const messagesRu: Record<string, string> = {
   "messages.editMessage": "Редактировать сообщение",
   "messages.attachedFiles": "Прикреплённые файлы",
   "messages.openAttachmentImage": "Открыть {fileName} крупнее",
+  "messages.toolImages": "Картинки, которые вызов показал модели",
+  "messages.openToolImage": "Открыть {fileName} крупнее",
   "messages.systemLabel": "Система",
   "messages.refresh": "Обновить",
   "messages.retryLastMessage": "Повторить последнее сообщение",

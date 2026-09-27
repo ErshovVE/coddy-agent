@@ -1382,6 +1382,8 @@ export const messagesEn: Record<string, string> = {
   "messages.editMessage": "Edit message",
   "messages.attachedFiles": "Attached files",
   "messages.openAttachmentImage": "Open {fileName} enlarged",
+  "messages.toolImages": "Pictures the call showed the model",
+  "messages.openToolImage": "Open {fileName} enlarged",
   "messages.systemLabel": "System",
   "messages.refresh": "Refresh",
   "messages.retryLastMessage": "Retry the last message",

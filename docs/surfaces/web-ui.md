@@ -798,6 +798,12 @@ A failed or cancelled call, and one whose arguments do not parse, keeps the raw 
 
 *An http request, the background task list and a task's output*
 
+![A read of screenshot.png: the picture previewed under the row, then the answer](../assets/read-image-preview-dark-1280.png)
+
+*A picture the model was shown, previewed under the read's row*
+
+A `read` that showed the model a picture ([Images](../features/images.md)) previews it under its row: one card per picture, the size of a sent attachment, seen with the row closed, that opens the original in the viewer the documentation reader uses. While the turn runs the card comes from `_meta.coddy.images` of the call's final update, after a reload from the `files` of the tool row, and the bytes go through the environment like an attachment's, so a remote server or a relay shows it too. It is the copy Coddy kept with the session, so a file overwritten later still previews as the model saw it. A failed `read` shows no card.
+
 ![Documentation search and read cards and the session filing card](../assets/web-ui/tool-structured-documents-dark-1280.png)
 
 *A documentation search, the section it read and the session's title and tags*
@@ -830,7 +836,8 @@ Authoritative behaviour matches **`DESIGN.md`** tool timeline plus this checklis
 | Markdown | Not used for tool **result** or **user** bubbles; **assistant** still uses Markdown per below |
 | List merge | **`App.tsx`** **`loadMessages`** merges **`GET /coddy/sessions/{id}/tool-calls`** rows into **`resultText`**, **`resultWasTruncated`**, timing |
 | Full text | First result **More…**, or automatic incomplete-args recovery for restored **`apply_patch`** / **`write`** / **`write_file`** / **`edit`** cards in any status - **`GET /coddy/sessions/{id}/tool-calls/{toolCallId}`**, using JSON **`result`** and **`args`** (same object includes **`meta`**). Transcript reconciles never replace complete args with the truncated 200-char **`argsPreview`** (**`pickRicherToolArgs`**), so live cards keep full previews across permission answers |
-| CSS | **`styles.css`**: **`.coddy-tool-call-row`**, transparent **`.coddy-tool-call-body`**, shared **`.permission-preview*`**, **`.tool-call-result-card`**, **`thinking-details:not([open])` body hidden**, plus result viewport / toggle classes above |
+| Pictures | **`ToolImagePreviews.tsx`** under the row, outside the **`details`**: **`.tool-images`**, one **`button.tool-image-card`** per picture (**`data-testid="tool-image-open"`**, thumbnail **`tool-image-thumb`**) that opens **`ImageLightbox`**; only on a completed call, from **`images`** of the row (**`_meta.coddy.images`** live, the tool row's **`files`** after a reload) |
+| CSS | **`styles.css`**: **`.coddy-tool-call-row`**, transparent **`.coddy-tool-call-body`**, shared **`.permission-preview*`**, **`.tool-call-result-card`**, **`thinking-details:not([open])` body hidden**, **`.tool-images`** / **`.tool-image-card`**, plus result viewport / toggle classes above |
 
 - `assistant_message`
   - Final assistant output text for the turn, after tool calls.

@@ -45,6 +45,10 @@ Coddy keeps a copy of every picture it showed the model with the session's asset
 
 ## Where you see it
 
+![A read of screenshot.png in the web UI: the picture previewed under the row, then the answer](../assets/read-image-preview-dark-1280.png)
+
+*The picture a `read` showed the model, previewed under its row; a click opens it enlarged.*
+
 | Surface | What it shows |
 |---|---|
 | [Web UI](../surfaces/web-ui.md) | A preview card under the `read` row; a click opens the picture enlarged. It works for a session started in the console or in Telegram, and through a remote server or a relay. |
