@@ -1,6 +1,6 @@
 # Interactive console TUI (`coddy` / `coddy cli`)
 
-https://github.com/user-attachments/assets/4d3a3632-004f-4014-909d-9f0275547be3
+https://github.com/user-attachments/assets/0fc63d52-94ca-4927-9c88-29dec02a8767
 
 *A three-minute recording of a console session on 1.2.31: the header with the project's `AGENTS.md` and the skills, the footer with the account usage, the model picker, file work with permission prompts, a `/commit` skill, the built-in documentation on F1 and `coddy -c`. The file is in the repository as [console.mp4](../assets/video/console.mp4).*
 

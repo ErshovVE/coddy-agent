@@ -65,7 +65,7 @@ Screenshots taken as evidence for a pull request (before and after pairs, every 
 
 ## Videos
 
-The five demos under `docs/assets/video/` (console, web UI, Zed and VS Code over ACP, swarm) were recorded with the rig in the demo-videos repository: scripted XTEST takes on Xvfb, post-production with `post.py` (zooms, captions, hotkey badges, intro and outro), then re-encoded for the repository:
+The six demos under `docs/assets/video/` (console, web UI, Zed and VS Code over ACP, the swarm, an Android phone as a swarm node) were recorded with the rig in the demo-videos repository: scripted XTEST takes on Xvfb, post-production with `post.py` (zooms, captions, hotkey badges, intro and outro), then re-encoded for the repository:
 
 ```bash
 ffmpeg -i take.mp4 -vf "scale=1280:-2" -c:v libx264 -preset slow -crf 31 -pix_fmt yuv420p -movflags +faststart -an docs/assets/video/<name>.mp4

@@ -2,7 +2,7 @@
 
 This page captures the original UI requirements and the intended end state. It is a functional spec and a design contract, with a screenshot of each surface next to the section that specifies it. The visual tokens and component contracts are in [DESIGN.md](../../DESIGN.md).
 
-https://github.com/user-attachments/assets/55e9e66f-8a8d-47be-af75-596b8b00fafa
+https://github.com/user-attachments/assets/34752734-2715-4aa3-936b-acfb5c7233bf
 
 *A three-minute recording of the web UI on 1.2.31: the model picker, tool calls as rows that name their action, the permission card with the diff of an edit, a `/commit` skill from the slash menu, and History grouped by folder, from which the session is continued. The file is in the repository as [web-ui.mp4](../assets/video/web-ui.mp4).*
 
