@@ -193,6 +193,35 @@ func TestAPictureIsNotResentAsADocumentAfterARateLimit(t *testing.T) {
 	}
 }
 
+// A Bad Request about something other than the photo (the chat is gone, the
+// thread closed) meets the document the same way, so the file is not sent
+// again; a refusal of photos in the chat is about the photo, and a document
+// may still be allowed there.
+func TestAPictureIsResentAsADocumentOnlyWhenThePhotoWasRefused(t *testing.T) {
+	for _, tc := range []struct {
+		description string
+		resent      bool
+	}{
+		{"Bad Request: chat not found", false},
+		{"Bad Request: message thread not found", false},
+		{"Bad Request: IMAGE_PROCESS_FAILED", true},
+		{"Bad Request: not enough rights to send photos to the chat", true},
+	} {
+		f := newFakeAPI(t, tgfake.Options{})
+		f.fake.SetFault(tgfake.Fault{Method: "sendPhoto", Code: http.StatusBadRequest, Description: tc.description, Times: 1})
+		dir := t.TempDir()
+		_, update := savedPicture(t, dir, "shot-1a.png")
+		s := newSender(f.api, 5, 0, slog.Default(), richConfig{})
+		s.pictures = fixedSession{id: "sess_chat", dir: dir}
+
+		_ = s.SendSessionUpdate("sess_chat", update)
+
+		if resent := len(f.fake.Calls("sendDocument")) > 0; resent != tc.resent {
+			t.Errorf("%q: sent again as a document = %v, want %v", tc.description, resent, tc.resent)
+		}
+	}
+}
+
 // The bytes are checked, not only the name: an asset that is not a picture
 // (replaced after the call, damaged) is not sent, not even as a document.
 func TestAnAssetThatIsNotAPictureIsNotSent(t *testing.T) {

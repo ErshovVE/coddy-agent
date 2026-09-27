@@ -376,6 +376,7 @@ func (a *Agent) Run(ctx context.Context, prompt []acp.ContentBlock) (string, err
 		WebSearch:         webSearchSettings(a.cfg),
 		PreviewServer:     previewServerSettings(a.cfg),
 		AttachImage:       a.attachToolImage,
+		ImageRefusal:      a.toolImageRefusal,
 	}
 	httpRequestEnv(toolEnv, a.cfg)
 	// The model's own model switch; a subagent runs on what its parent chose.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/color/palette"
@@ -456,5 +457,107 @@ func TestReadSurvivesEveryPrefixOfAPicture(t *testing.T) {
 				}
 			}()
 		}
+	}
+}
+
+// pngChunk is one PNG chunk: its length, its name, its payload and the
+// checksum over the name and the payload.
+func pngChunk(name string, payload []byte) []byte {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.BigEndian, uint32(len(payload)))
+	buf.WriteString(name)
+	buf.Write(payload)
+	_ = binary.Write(&buf, binary.BigEndian, crc32.ChecksumIEEE(append([]byte(name), payload...)))
+	return buf.Bytes()
+}
+
+// A picture that is all there but holds no image - a PNG with no IDAT, a JPEG
+// with no scan - or a PNG whose chunks do not match their checksums is refused
+// like a cut one: the decoders providers run refuse it too (Pillow does), and
+// the history would carry it to every later request.
+func TestReadRefusesAPictureWithNoImageInIt(t *testing.T) {
+	env, got := imageEnv(t)
+	ihdr := []byte{0, 0, 0, 4, 0, 0, 0, 3, 8, 2, 0, 0, 0}
+	writeFile(t, env, "empty.png", bytes.Join([][]byte{[]byte("\x89PNG\r\n\x1a\n"), pngChunk("IHDR", ihdr), pngChunk("IEND", nil)}, nil))
+	damaged := encodePNG(t, 40, 30)
+	damaged[len(damaged)-20] ^= 0xFF // a byte of the image data, before its checksum
+	writeFile(t, env, "damaged.png", damaged)
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, solidImage(64, 48), nil); err != nil {
+		t.Fatal(err)
+	}
+	// A camera's JPEG opens with a JFIF segment, and with one the header
+	// decoder stops at the frame size without looking for a scan.
+	jfif := []byte{0xFF, 0xE0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00}
+	camera := bytes.Join([][]byte{jpg.Bytes()[:2], jfif, jpg.Bytes()[2:]}, nil)
+	sos := bytes.Index(camera, []byte{0xFF, 0xDA})
+	writeFile(t, env, "empty.jpg", append(append([]byte(nil), camera[:sos]...), 0xFF, 0xD9))
+	writeFile(t, env, "camera.jpg", camera)
+
+	for name, want := range map[string]string{
+		"empty.png":   "no image data",
+		"damaged.png": "checksum",
+		"empty.jpg":   "no image data",
+	} {
+		_, err := runRead(env, `{"path":"`+name+`"}`)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", name, err, want)
+		}
+	}
+	if len(*got) != 0 {
+		t.Errorf("attached %d pictures with no image in them", len(*got))
+	}
+	if _, err := runRead(env, `{"path":"camera.jpg"}`); err != nil {
+		t.Errorf("the whole JFIF picture: %v", err)
+	}
+}
+
+// A WebP whose RIFF header states a size other than what follows it is
+// refused, a size larger than the file, as some writers put the whole file's
+// length there, included: libwebp does not decode such a file either.
+func TestReadRefusesAWebPWhoseSizeIsWrong(t *testing.T) {
+	env, got := imageEnv(t)
+	whole := webpFile(vp8lChunk(64, 48))
+	for name, size := range map[string]int{"total.webp": len(whole), "zero.webp": 0} {
+		data := append([]byte(nil), whole...)
+		binary.LittleEndian.PutUint32(data[4:8], uint32(size))
+		writeFile(t, env, name, data)
+		if _, err := runRead(env, `{"path":"`+name+`"}`); err == nil {
+			t.Errorf("%s with a RIFF size of %d was taken", name, size)
+		}
+	}
+	if len(*got) != 0 {
+		t.Errorf("attached %d WebP files of a wrong size", len(*got))
+	}
+}
+
+// A model that cannot see pictures is told so before anything else: advice to
+// make a picture smaller, or to wait for one still being written, would only
+// lead it to a second refusal.
+func TestReadTellsAModelWithoutImagesSoFirst(t *testing.T) {
+	env, got := imageEnv(t)
+	env.ImageRefusal = func() error { return errors.New("the session's model m does not read images") }
+	path := filepath.Join(env.CWD, "huge.png")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(encodePNG(t, 2, 2)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(readImageMaxBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	_ = f.Close()
+	writeFile(t, env, "cut.png", encodePNG(t, 40, 30)[:60])
+	writeFile(t, env, "shot.png", encodePNG(t, 4, 3))
+	for _, name := range []string{"huge.png", "cut.png", "shot.png"} {
+		_, err := runRead(env, `{"path":"`+name+`"}`)
+		if err == nil || !strings.Contains(err.Error(), "does not read images") || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: err = %v, want the model's refusal first", name, err)
+		}
+	}
+	if len(*got) != 0 {
+		t.Errorf("attached %d pictures for a model that cannot see them", len(*got))
 	}
 }

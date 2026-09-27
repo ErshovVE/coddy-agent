@@ -259,7 +259,7 @@ func (a *Agent) refreshContextBreakdown(build *systemPromptBuild, turnCtx string
 	// LLM-visible window after the last compaction summary.
 	sys := joinNonEmptyPromptBlocks(build.Content, turnCtx)
 	msgs := a.prunedForLLM(session.MessagesForLLM(a.state.GetMessages()))
-	a.setContextBreakdown(computeContextBreakdown(sys, build.SkillsMD, build.ToolsMD, build.RulesMD, msgs, build.ToolDefs), false)
+	a.setContextBreakdown(computeContextBreakdown(sys, build.SkillsMD, build.ToolsMD, build.RulesMD, msgs, a.modelReadsImages(), build.ToolDefs), false)
 }
 
 func discardedPlansPromptBlock(slugs []string) string {

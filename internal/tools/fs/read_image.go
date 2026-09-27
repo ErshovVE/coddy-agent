@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/gif"
 	_ "image/jpeg" // image.DecodeConfig reads the size of a JPEG
@@ -50,6 +51,9 @@ func readImage(argPath, path string, data []byte, kind string, env *tooling.Env)
 	if env == nil || env.AttachImage == nil {
 		return "", fmt.Errorf("read: %s %w (%s, %d bytes); read shows text files only", argPath, errBinaryFile, kind, len(data))
 	}
+	if err := imageRefused(argPath, env); err != nil {
+		return "", err
+	}
 	format := readImageFormats[kind]
 	if len(data) > readImageMaxBytes {
 		return "", oversizedImage(argPath, kind, int64(len(data)), env)
@@ -58,7 +62,7 @@ func readImage(argPath, path string, data []byte, kind string, env *tooling.Env)
 	if err == nil {
 		err = imageComplete(data, kind)
 	}
-	if errors.Is(err, errImageCut) || errors.Is(err, errWebPNoImage) || errors.Is(err, errWebPAnimated) {
+	if isStructureFault(err) {
 		return "", fmt.Errorf("read: %s %w", argPath, err)
 	}
 	if err != nil {
@@ -98,11 +102,27 @@ func readImage(argPath, path string, data []byte, kind string, env *tooling.Env)
 		argPath, format, w, h, formatBytes(len(data)), note), nil
 }
 
+// imageRefused is the session's refusal of any picture (Env.ImageRefusal),
+// naming the file, or nil.
+func imageRefused(argPath string, env *tooling.Env) error {
+	if env == nil || env.ImageRefusal == nil {
+		return nil
+	}
+	if err := env.ImageRefusal(); err != nil {
+		return fmt.Errorf("read: %s: %w", argPath, err)
+	}
+	return nil
+}
+
 // oversizedImage is the refusal of a picture larger than readImageMaxBytes,
-// or the old binary refusal where no agent takes pictures at all.
+// or the old binary refusal where no agent takes pictures at all, or the
+// session's refusal of any picture, which comes first.
 func oversizedImage(argPath, kind string, size int64, env *tooling.Env) error {
 	if env == nil || env.AttachImage == nil {
 		return fmt.Errorf("read: %s %w (%s, %d bytes); read shows text files only", argPath, errBinaryFile, kind, size)
+	}
+	if err := imageRefused(argPath, env); err != nil {
+		return err
 	}
 	return fmt.Errorf("read: %s is a %s image of %s, more than the %s one picture may take; save a scaled-down copy and read that",
 		argPath, readImageFormats[kind], formatBytes(int(size)), formatBytes(readImageMaxBytes))
@@ -126,9 +146,23 @@ func sniffFileHead(path string) string {
 // of the session, so its structure is walked to the end before it is taken.
 var (
 	errImageCut     = errors.New("ends before its image does: the file may still be written, read it again once it is complete")
+	errPNGNoImage   = errors.New("is a PNG file with no image data")
+	errPNGDamaged   = errors.New("is a damaged PNG file: a chunk of it does not match its checksum")
+	errJPEGNoImage  = errors.New("is a JPEG file with no image data")
 	errWebPNoImage  = errors.New("is a WebP file with no image data")
 	errWebPAnimated = errors.New("is an animated WebP, which not every provider takes; save a frame of it as a PNG and read that")
 )
+
+// isStructureFault reports whether err is one of the refusals above, which
+// read words itself, rather than a decoder's error.
+func isStructureFault(err error) bool {
+	for _, fault := range []error{errImageCut, errPNGNoImage, errPNGDamaged, errJPEGNoImage, errWebPNoImage, errWebPAnimated} {
+		if errors.Is(err, fault) {
+			return true
+		}
+	}
+	return false
+}
 
 // imageSize reads a picture's width and height from its header, without
 // decoding its pixels.
@@ -156,15 +190,28 @@ func imageComplete(data []byte, kind string) error {
 	return nil
 }
 
-// pngComplete follows the chunks after the signature to IEND.
+// pngComplete follows the chunks after the signature to IEND, checking each
+// chunk against its checksum and that image data came before the end. A
+// damaged chunk, image data or not, is refused: Go's decoder refuses any,
+// libpng any critical one, Pillow any other than the image data.
 func pngComplete(data []byte) error {
+	sawImage := false
 	for off := 8; off+8 <= len(data); {
 		n := int(binary.BigEndian.Uint32(data[off : off+4]))
-		end := off + 12 + n
-		if n < 0 || end > len(data) {
+		if n < 0 || n > len(data)-off-12 {
 			return errImageCut
 		}
-		if string(data[off+4:off+8]) == "IEND" {
+		end := off + 12 + n
+		if crc32.ChecksumIEEE(data[off+4:end-4]) != binary.BigEndian.Uint32(data[end-4:end]) {
+			return errPNGDamaged
+		}
+		switch string(data[off+4 : off+8]) {
+		case "IDAT":
+			sawImage = true
+		case "IEND":
+			if !sawImage {
+				return errPNGNoImage
+			}
 			return nil
 		}
 		off = end
@@ -172,10 +219,11 @@ func pngComplete(data []byte) error {
 	return errImageCut
 }
 
-// jpegComplete follows the markers after SOI to EOI, skipping each segment by
-// its length and the entropy-coded data after a start of scan up to the next
-// marker. What follows EOI - a camera's trailer - does not matter.
+// jpegComplete follows the segments of a JPEG to its end-of-image marker,
+// skipping the entropy-coded data after each start of scan, and wants at
+// least one scan before the end: a JPEG with none holds no picture.
 func jpegComplete(data []byte) error {
+	sawScan := false
 	for i := 2; i+1 < len(data); {
 		if data[i] != 0xFF {
 			return errImageCut
@@ -186,6 +234,9 @@ func jpegComplete(data []byte) error {
 			i++
 			continue
 		case m == 0xD9: // EOI
+			if !sawScan {
+				return errJPEGNoImage
+			}
 			return nil
 		case m == 0x01 || (m >= 0xD0 && m <= 0xD7): // TEM, RSTn: no length
 			i += 2
@@ -198,6 +249,7 @@ func jpegComplete(data []byte) error {
 		if m != 0xDA { // not SOS
 			continue
 		}
+		sawScan = true
 		for i+1 < len(data) && (data[i] != 0xFF || data[i+1] == 0x00 || (data[i+1] >= 0xD0 && data[i+1] <= 0xD7)) {
 			i++
 		}
@@ -208,7 +260,9 @@ func jpegComplete(data []byte) error {
 // webpInfo walks the chunks of a WebP, which the standard library has no
 // decoder for: it reads the canvas size (from VP8X, else from the VP8 or VP8L
 // image chunk), requires that image chunk to be there, and refuses an
-// animation and a chunk that runs past the end of the file.
+// animation and a chunk that runs past the end of the file. A RIFF size larger
+// than what follows the header is refused too, the whole file's length or a
+// zero written there included: libwebp does not decode such a file.
 func webpInfo(data []byte) (int, int, error) {
 	if len(data) < 12 || string(data[0:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
 		return 0, 0, errors.New("no WebP header")

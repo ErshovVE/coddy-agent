@@ -776,9 +776,10 @@ message the answer grows in was sent before the call ran, so the bot drops
 it once a photo is posted and the answer comes below the photo as a new
 reply to the question; the old message is deleted when Telegram allows it.
 
-A picture Telegram refuses as a photo - a side too long, a shape too narrow -
-goes as a document instead; a rate limit or a failure on the way is not
-retried as a document. Only the chat's own session sends
+A picture Telegram refuses as a photo - a side too long, a shape too narrow,
+photos not allowed in the chat - goes as a document instead; a rate limit, a
+failure on the way or a refusal about the chat itself is not retried as a
+document. Only the chat's own session sends
 pictures: what a subagent reads stays in its session, and the web UI shows it
 there. A model without `multimodal` is refused the picture, so nothing is sent
 and the `read` reports why.

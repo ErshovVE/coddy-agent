@@ -269,6 +269,32 @@ func TestLlmMsgsToCoddyOpenAIForSessionNamesThePicturesOfAToolResult(t *testing.
 	}
 }
 
+// A session bundle that moved keeps the paths its parts recorded where it was
+// before; the copies are in its assets directory now, under the same names,
+// and the transcript addresses them there - the way the agent finds a tool
+// picture's copy to send - so a WebP without a thumbnail still has a card.
+func TestLlmMsgsToCoddyOpenAIForSessionAddressesTheCopiesOfAMovedBundle(t *testing.T) {
+	assetsDir := filepath.Join(t.TempDir(), "sess_moved", "assets")
+	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const asset = "shot-0123456789abcdef.webp"
+	if err := os.WriteFile(filepath.Join(assetsDir, asset), []byte("RIFF"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	recorded := filepath.Join(t.TempDir(), "sess_moved", "assets", asset)
+	out := llmMsgsToCoddyOpenAIForSession("sess_moved", assetsDir, []llm.Message{{
+		Role:       llm.RoleTool,
+		ToolCallID: "r1",
+		Content:    "shot.webp: WebP image, 4x3",
+		ImageParts: []llm.ImagePart{{Name: "shot.webp", MIMEType: "image/webp", FilePath: recorded}},
+	}})
+	files := out[0]["files"].([]map[string]interface{})
+	if got := files[0]["url"]; got != "/coddy/sessions/sess_moved/assets/"+asset {
+		t.Errorf("url = %#v, want the copy in the bundle's assets now", got)
+	}
+}
+
 // The served spec is the contract clients generate against: the new route is
 // in it, and its description states the narrower rule it now enforces.
 func TestOpenAPIDescribesTheSessionAssetRoute(t *testing.T) {

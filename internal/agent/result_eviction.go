@@ -85,7 +85,7 @@ func (a *Agent) evictionDue(msgs []llm.Message) bool {
 			overhead = b.EstimatedTotal - b.Conversation
 		}
 	}
-	total := overhead + conversationTokens(msgs)
+	total := overhead + conversationTokens(msgs, a.modelReadsImages())
 	return total*100 >= start*ent.MaxContextTokens
 }
 

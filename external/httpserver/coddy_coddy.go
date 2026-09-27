@@ -1073,26 +1073,26 @@ func llmMsgsToCoddyOpenAI(msgs []llm.Message) []map[string]interface{} {
 	return llmMsgsToCoddyOpenAIForSession("", "", msgs)
 }
 
-// isAssetOf reports whether path is a regular file directly inside assetsDir.
-// Symlinks do not count: the address the transcript hands out promises bytes of
-// this session's bundle, and a link planted in that directory - the agent can
-// write there, and the prompt tells it where - would make it serve whatever it
-// points at.
 // isRegularFile reports whether path is a regular file, a link not followed.
 func isRegularFile(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()
 }
 
-func isAssetOf(assetsDir, path string) bool {
+// recordedAsset is the name under assetsDir of the copy a part recorded at
+// path: its base name, when path was in this assets directory or in the one
+// the bundle had before it moved. A path anywhere else names no copy: its base
+// name would either answer 404 or, worse, name a different file that happens
+// to share it.
+func recordedAsset(assetsDir, path string) string {
 	if assetsDir == "" || path == "" {
-		return false
+		return ""
 	}
-	if filepath.Dir(path) != filepath.Clean(assetsDir) {
-		return false
+	dir := filepath.Dir(path)
+	if dir != filepath.Clean(assetsDir) && filepath.Base(dir) != filepath.Base(session.AssetsPath("")) {
+		return ""
 	}
-	info, err := os.Lstat(path)
-	return err == nil && info.Mode().IsRegular()
+	return filepath.Base(path)
 }
 
 func llmMsgsToCoddyOpenAIForSession(sessionID, assetsDir string, msgs []llm.Message) []map[string]interface{} {
@@ -1151,19 +1151,20 @@ func llmMsgsToCoddyOpenAIForSession(sessionID, assetsDir string, msgs []llm.Mess
 					"name":      name,
 					"mime_type": imagePartMIMEType(part),
 				}
-				// The preview address is given only for a thumbnail on disk, the
-				// way the original's is, so a card never loads a missing one.
-				if sessionID != "" && part.FilePath != "" && part.ThumbnailPath != "" &&
-					assetsDir != "" && isRegularFile(session.ThumbnailPathInAssets(assetsDir, filepath.Base(part.FilePath))) {
-					file["preview_url"] = session.AssetThumbnailRoute(sessionID, filepath.Base(part.FilePath))
-				}
-				// The full-size original, for a preview card to open enlarged.
-				// The address is a name under this session's assets directory,
-				// so a part saved anywhere else gets none: its base name would
-				// either 404 or, worse, name a different file that happens to
-				// share it.
-				if sessionID != "" && assetsDir != "" && isAssetOf(assetsDir, part.FilePath) {
-					file["url"] = session.AssetRoute(sessionID, filepath.Base(part.FilePath))
+				// Both addresses are names under this session's assets directory,
+				// given only for a regular file there, so a card never loads a
+				// missing one. Symlinks do not count: the address promises bytes
+				// of this session's bundle, and a link planted in that directory -
+				// the agent can write there, and the prompt tells it where - would
+				// make it serve whatever it points at.
+				if asset := recordedAsset(assetsDir, part.FilePath); sessionID != "" && asset != "" {
+					if part.ThumbnailPath != "" && isRegularFile(session.ThumbnailPathInAssets(assetsDir, asset)) {
+						file["preview_url"] = session.AssetThumbnailRoute(sessionID, asset)
+					}
+					// The full-size original, for a preview card to open enlarged.
+					if isRegularFile(filepath.Join(assetsDir, asset)) {
+						file["url"] = session.AssetRoute(sessionID, asset)
+					}
 				}
 				files = append(files, file)
 			}

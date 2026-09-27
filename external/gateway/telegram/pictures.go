@@ -76,13 +76,7 @@ func (s *Sender) sendPictures(sessionID string, images []session.ToolImage) {
 			posted = true
 			continue
 		}
-		// Only Telegram refusing the photo itself (its size, its shape) is
-		// worth another try as a document; a rate limit or a failure on the way
-		// would only double the traffic. The library leaves the code of an
-		// upload's error at zero, so the Bot API's own "Bad Request" wording
-		// tells a refusal apart.
-		var apiErr *tgbotapi.Error
-		if !errors.As(err, &apiErr) || (apiErr.Code != http.StatusBadRequest && !strings.HasPrefix(apiErr.Message, "Bad Request")) {
+		if !photoRefused(err) {
 			s.log.Warn("telegram: send picture", "name", name, "err", err)
 			continue
 		}
@@ -95,6 +89,22 @@ func (s *Sender) sendPictures(sessionID string, images []session.ToolImage) {
 		}
 		posted = true
 	}
+}
+
+// photoRefused reports whether Telegram refused a picture as a photo - its
+// size, its shape, its format, or photos not being allowed in the chat - the
+// one failure another try as a document can get past. A rate limit, a failure
+// on the way or a Bad Request about the chat itself would meet the document
+// the same way. The library leaves the code of an upload's error at zero, so
+// the Bot API's own "Bad Request" wording tells a refusal apart, and its
+// description names the photo or the image.
+func photoRefused(err error) bool {
+	var apiErr *tgbotapi.Error
+	if !errors.As(err, &apiErr) || (apiErr.Code != http.StatusBadRequest && !strings.HasPrefix(apiErr.Message, "Bad Request")) {
+		return false
+	}
+	desc := strings.ToLower(apiErr.Message)
+	return strings.Contains(desc, "photo") || strings.Contains(desc, "image")
 }
 
 // moveLiveBelow keeps the answer under the pictures it follows. Without Rich

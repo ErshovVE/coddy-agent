@@ -262,3 +262,54 @@ func TestSaveToolImageAssetKeepsTheCopyWhenTheThumbnailFails(t *testing.T) {
 		t.Fatalf("the asset is not on disk: %v", statErr)
 	}
 }
+
+// A copy is read back only as it was saved: under a bare name that carries
+// its digest, as a regular file, within the size asked for, and holding the
+// bytes the digest names.
+func TestReadToolImageAssetReadsOnlyTheCopyThatWasSaved(t *testing.T) {
+	dir := t.TempDir()
+	picture := pngBytes(t, 3, 2, color.White)
+	asset, _, err := SaveToolImageAsset(dir, "shot.png", "image/png", picture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Base(asset)
+	if got, err := ReadToolImageAsset(dir, name, 1<<20); err != nil || !bytes.Equal(got, picture) {
+		t.Fatalf("the saved copy reads as %d bytes (%v)", len(got), err)
+	}
+	if _, err := ReadToolImageAsset(dir, name, int64(len(picture)-1)); err == nil {
+		t.Error("a copy larger than asked for was read")
+	}
+	for _, bad := range []string{"", "..", "../" + name, `..\` + name, "shot.png"} {
+		if _, err := ReadToolImageAsset(dir, bad, 1<<20); err == nil {
+			t.Errorf("the name %q was read", bad)
+		}
+	}
+	if _, err := ReadToolImageAsset("", name, 1<<20); err == nil {
+		t.Error("a copy was read with no session directory")
+	}
+
+	if err := os.Chmod(asset, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(asset, pngBytes(t, 3, 2, color.Black), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadToolImageAsset(dir, name, 1<<20); err == nil {
+		t.Error("a copy whose bytes changed was read")
+	}
+
+	if err := os.Remove(asset); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(t.TempDir(), "picture.png")
+	if err := os.WriteFile(elsewhere, picture, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, asset); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := ReadToolImageAsset(dir, name, 1<<20); err == nil {
+		t.Error("a link under the copy's name was followed")
+	}
+}

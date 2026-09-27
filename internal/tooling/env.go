@@ -158,6 +158,12 @@ type Env struct {
 	// read then refuses the file as binary.
 	AttachImage func(name, mimeType string, data []byte) error
 
+	// ImageRefusal says why the session cannot take a picture now - its model
+	// does not read images - or nil when it can. read asks it before any other
+	// check of a picture, so a model that cannot see one is told that, not how
+	// to make the file smaller. Nil means no refusal beyond AttachImage's own.
+	ImageRefusal func() error
+
 	// PreviewServer is the resolved tools.preview_server section the
 	// preview_server tool reads its bind host from. Like WebSearch it travels
 	// on the environment so a config reload reaches the next call. Nil means

@@ -101,3 +101,54 @@ func TestPicturesAProviderCannotTakeGoAsText(t *testing.T) {
 		}
 	}
 }
+
+// An SVG is text: no provider takes it as a picture, so every one of them
+// writes it out as a labelled file, OpenAI-compatible and Devin included.
+func TestAnSVGGoesAsTextToEveryProvider(t *testing.T) {
+	svg := ImagePart{Name: "logo.svg", DataURL: "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte("<svg/>"))}
+	msg := Message{Role: RoleUser, Content: "look", ImageParts: []ImagePart{svg}}
+
+	openai := newOpenAIProvider("gpt-4o", "key", "", nil, 0, 0, "")
+	raw, _ := json.Marshal(openai.buildParams([]Message{msg}, nil, false).Messages)
+	if s := string(raw); strings.Contains(s, "image_url") || !strings.Contains(s, `[File: logo.svg]\n`) || !strings.Contains(s, "svg/") {
+		t.Errorf("OpenAI sends the SVG as %s", s)
+	}
+
+	_, prompts := devinPrompts([]Message{msg}, "m")
+	if len(prompts[0].images) != 0 || !strings.Contains(prompts[0].text, "[File: logo.svg]\n<svg/>") {
+		t.Errorf("Devin sends the SVG as %+v", prompts[0])
+	}
+	if IsPicture(svg) {
+		t.Error("an SVG counts as a picture")
+	}
+}
+
+// The base64 flag of a data URL is its last parameter, spelled in any case,
+// and nothing else: a parameter that only starts with it is not the flag.
+func TestTheBase64FlagOfADataURLIsReadExactly(t *testing.T) {
+	for _, tc := range []struct {
+		url      string
+		isBase64 bool
+		mime     string
+	}{
+		{"data:image/png;base64,AAAA", true, "image/png"},
+		{"data:image/png;BASE64,AAAA", true, "image/png"},
+		{"data:Image/PNG;charset=x;base64,AAAA", true, "image/png"},
+		{"data:image/png;base64x,AAAA", false, "image/png"},
+		{"data:image/png;base64=1,AAAA", false, "image/png"},
+		{"data:image/png;base64;x=1,AAAA", false, "image/png"},
+		{"data:image/png,AAAA", false, "image/png"},
+		{"https://example.com/a.png", false, ""},
+	} {
+		mime, isBase64, _ := parseDataURL(tc.url)
+		if mime != tc.mime || isBase64 != tc.isBase64 {
+			t.Errorf("%s: type %q base64 %v, want %q %v", tc.url, mime, isBase64, tc.mime, tc.isBase64)
+		}
+	}
+
+	msg := Message{Role: RoleUser, Content: "look", ImageParts: []ImagePart{{Name: "odd.png", DataURL: "data:image/png;base64x,AAAA"}}}
+	_, conv := newAnthropicProvider("claude-sonnet-4-5", "", "", nil, 8192, 0.7, "").splitMessages([]Message{msg})
+	if raw, _ := json.Marshal(conv); strings.Contains(string(raw), `"type":"image"`) || !strings.Contains(string(raw), "odd.png") {
+		t.Errorf("Anthropic sends a data URL with no base64 flag as %s", raw)
+	}
+}

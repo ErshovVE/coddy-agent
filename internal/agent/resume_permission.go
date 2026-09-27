@@ -174,6 +174,7 @@ func (a *Agent) buildToolEnv(mode, sessionDir string) *tools.Env {
 		BackgroundEnabled: a.cfg.Tools.Background.ResolvedEnabled(),
 		WebSearch:         webSearchSettings(a.cfg),
 		AttachImage:       a.attachToolImage,
+		ImageRefusal:      a.toolImageRefusal,
 	}
 	httpRequestEnv(env, a.cfg)
 	a.applySubagentEnv(env, mode)

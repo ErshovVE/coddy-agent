@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -92,8 +93,7 @@ func SaveToolImageAsset(sessionDir, name, mimeType string, data []byte) (assetPa
 	if ext == "" {
 		ext = filepath.Ext(base)
 	}
-	sum := sha256.Sum256(data)
-	assetName := stem + "-" + hex.EncodeToString(sum[:8]) + ext
+	assetName := stem + "-" + toolImageDigest(data) + ext
 
 	assetsDir := AssetsPath(sessionDir)
 	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
@@ -125,6 +125,80 @@ func SaveToolImageAsset(sessionDir, name, mimeType string, data []byte) (assetPa
 		return assetPath, "", fmt.Errorf("write thumbnail %s: %w", assetName, err)
 	}
 	return assetPath, thumbPath, nil
+}
+
+// toolImageDigest is the digest a copy's name carries: the first 8 bytes of
+// the SHA-256 of its content, in hex.
+func toolImageDigest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8])
+}
+
+// toolImageDigestOf reads the digest out of a copy's name, the 16 hex digits
+// between the last '-' and the extension; "" when the name carries none.
+func toolImageDigestOf(assetName string) string {
+	stem := strings.TrimSuffix(assetName, filepath.Ext(assetName))
+	i := strings.LastIndexByte(stem, '-')
+	if i < 0 {
+		return ""
+	}
+	digest := stem[i+1:]
+	if len(digest) != 16 {
+		return ""
+	}
+	if _, err := hex.DecodeString(digest); err != nil {
+		return ""
+	}
+	return digest
+}
+
+// ReadToolImageAsset reads the copy SaveToolImageAsset kept under assetName
+// with the session's assets, and only that copy: a bare name, a regular file
+// (a link planted under the name is not followed), at most maxBytes, and
+// bytes whose digest is the one the name carries. A copy that changed since
+// it was saved is not the picture the call showed, and sending it would
+// change a request the provider has cached, so it is refused like a missing
+// one.
+func ReadToolImageAsset(sessionDir, assetName string, maxBytes int64) ([]byte, error) {
+	if strings.TrimSpace(sessionDir) == "" {
+		return nil, fmt.Errorf("the session has no directory to keep copies in")
+	}
+	if assetName == "" || assetName == "." || assetName == ".." || strings.ContainsAny(assetName, `/\`) {
+		return nil, fmt.Errorf("%q is not the name of a copy", assetName)
+	}
+	want := toolImageDigestOf(assetName)
+	if want == "" {
+		return nil, fmt.Errorf("the name %s carries no digest of its content", assetName)
+	}
+	path := filepath.Join(AssetsPath(sessionDir), assetName)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("the copy %s is not a regular file", assetName)
+	}
+	if info.Size() > maxBytes {
+		return nil, fmt.Errorf("the copy %s is larger than %d bytes", assetName, maxBytes)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("the copy %s is larger than %d bytes", assetName, maxBytes)
+	}
+	// Whatever the path led to by the time it was opened, only the bytes the
+	// name was given for go on.
+	if toolImageDigest(data) != want {
+		return nil, fmt.Errorf("the copy %s no longer holds the picture it was saved with", assetName)
+	}
+	return data, nil
 }
 
 // holds reports whether path is a regular file with exactly data in it.

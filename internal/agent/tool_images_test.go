@@ -165,6 +165,14 @@ func TestReadOfAnImageIsRefusedForAModelThatDoesNotReadImages(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "shot.png"), testPNG(4, 3, color.Black), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Past the size one picture may take: the model is still told first that
+	// it cannot see pictures, not how to make this one smaller.
+	if err := os.WriteFile(filepath.Join(dir, "huge.png"), testPNG(4, 3, color.Black), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(filepath.Join(dir, "huge.png"), 8<<20); err != nil {
+		t.Fatal(err)
+	}
 	sessionDir := filepath.Join(dir, ".session")
 	cfg := &config.Config{
 		Providers: []config.ProviderConfig{{Name: "fake", Type: "openai", APIKey: "test"}},
@@ -173,7 +181,7 @@ func TestReadOfAnImageIsRefusedForAModelThatDoesNotReadImages(t *testing.T) {
 		Tools:     config.Tools{PermissionMode: config.PermModeBypass},
 	}
 	st := &session.State{ID: "sess_text_model", CWD: dir, Mode: session.ModeAgent, SessionDir: sessionDir}
-	provider := &evScriptProvider{steps: []evStep{{calls: []llm.ToolCall{tcReadPath("r1", "shot.png")}}, {text: "answer"}}}
+	provider := &evScriptProvider{steps: []evStep{{calls: []llm.ToolCall{tcReadPath("r1", "shot.png"), tcReadPath("r2", "huge.png")}}, {text: "answer"}}}
 	ag := NewAgent(cfg, st, resumePermissionSender{}, nil)
 	ag.providerFactory = func(llm.ProviderInput) (llm.Provider, error) { return provider, nil }
 	if _, err := ag.Run(context.Background(), []acp.ContentBlock{{Type: "text", Text: "look"}}); err != nil {
@@ -181,17 +189,19 @@ func TestReadOfAnImageIsRefusedForAModelThatDoesNotReadImages(t *testing.T) {
 	}
 
 	last := provider.streamSeen[len(provider.streamSeen)-1]
-	var result string
+	results := map[string]string{}
 	for _, m := range last {
 		if len(m.ImageParts) > 0 {
 			t.Errorf("a %s message carries %d image(s) for a model that does not read them", m.Role, len(m.ImageParts))
 		}
-		if m.Role == llm.RoleTool && m.ToolCallID == "r1" {
-			result = m.Content
+		if m.Role == llm.RoleTool {
+			results[m.ToolCallID] = m.Content
 		}
 	}
-	if !strings.Contains(result, "does not read images") || !strings.Contains(result, "fake/text") {
-		t.Errorf("tool result %q does not say the model fake/text does not read images", result)
+	for _, id := range []string{"r1", "r2"} {
+		if result := results[id]; !strings.Contains(result, "does not read images") || !strings.Contains(result, "fake/text") {
+			t.Errorf("tool result %s %q does not say the model fake/text does not read images", id, result)
+		}
 	}
 	if entries, _ := os.ReadDir(session.AssetsPath(sessionDir)); len(entries) > 0 {
 		t.Errorf("a refused picture was saved with the assets: %v", entries)
@@ -255,9 +265,10 @@ func TestWithToolImagesSendsOnlyTheNewestPicturesARequestCanHold(t *testing.T) {
 	}
 }
 
-// The pictures a person attached go out too, so they count first: tool
-// pictures fill what they leave, newest first, and one that does not fit the
-// bytes left is skipped for an older one that does.
+// The pictures a person attached go out with the request too, so they share
+// its budget with the tool pictures, newest first: the oldest attachment is
+// the one left out, named in its own prompt, and a picture that does not fit
+// the bytes left is skipped for an older one that does.
 func TestWithToolImagesCountsTheAttachmentsAndSkipsWhatDoesNotFit(t *testing.T) {
 	sized := func(name string, mb int) llm.ImagePart {
 		p := imagePart(name)
@@ -276,11 +287,14 @@ func TestWithToolImagesCountsTheAttachmentsAndSkipsWhatDoesNotFit(t *testing.T) 
 		toolResultWith("c", imagePart("c.png")),
 	}
 	out := withToolImages(history, true, noToolImageFile)
-	if got := imageNames(out[len(out)-1]); strings.Join(got, ",") != "b.png,c.png" {
-		t.Errorf("next to %d attachments the request carries %v, want the two newest tool pictures", len(attached), got)
+	if got := imageNames(out[len(out)-1]); strings.Join(got, ",") != "a.png,b.png,c.png" {
+		t.Errorf("next to %d attachments the request carries %v, want every tool picture of the last step", len(attached), got)
 	}
-	if len(out[0].ImageParts) != len(attached) {
-		t.Errorf("the attachments lost pictures: %d", len(out[0].ImageParts))
+	if got := imageNames(out[0]); len(got) != len(attached)-1 || got[0] != "u01.png" {
+		t.Errorf("the prompt goes with %v, want every attachment but the oldest", got)
+	}
+	if !strings.Contains(out[0].Content, "u00.png") || !strings.Contains(out[0].Content, "left out") {
+		t.Errorf("the prompt %q does not name u00.png as left out", out[0].Content)
 	}
 
 	history = []llm.Message{
@@ -382,14 +396,14 @@ func noToolImageFile(p llm.ImagePart) (string, error) {
 // automatic compaction and the context ring, and runs past the window.
 func TestConversationTokensCountThePicturesARequestCarries(t *testing.T) {
 	text := []llm.Message{{Role: llm.RoleUser, Content: "look"}, toolResultWith("r1")}
-	base := conversationTokens(text)
+	base := conversationTokens(text, true)
 
 	withPictures := []llm.Message{
 		{Role: llm.RoleUser, Content: "look", ImageParts: []llm.ImagePart{imagePart("attached.png")}},
 		toolResultWith("r1", imagePart("a.png"), imagePart("b.png")),
 	}
 	withPictures[1].Content = text[1].Content
-	if got, want := conversationTokens(withPictures), base+3*imageTokensEach; got < want-10 || got > want+10 {
+	if got, want := conversationTokens(withPictures, true), base+3*imageTokensEach; got < want-10 || got > want+10 {
 		t.Errorf("three pictures: %d tokens, want about %d", got, want)
 	}
 
@@ -399,7 +413,7 @@ func TestConversationTokensCountThePicturesARequestCarries(t *testing.T) {
 	}
 	crowded := []llm.Message{{Role: llm.RoleUser, Content: "look"}, toolResultWith("r1", many...)}
 	crowded[1].Content = text[1].Content
-	if got, want := conversationTokens(crowded), base+toolImagesMaxCount*imageTokensEach; got < want-10 || got > want+10 {
+	if got, want := conversationTokens(crowded, true), base+toolImagesMaxCount*imageTokensEach; got < want-10 || got > want+10 {
 		t.Errorf("%d tool pictures: %d tokens, want about %d (only %d go out)", len(many), got, want, toolImagesMaxCount)
 	}
 }
@@ -417,5 +431,112 @@ func TestWithToolImagesKeepsTheTextFilesOfAPromptForAModelWithoutImages(t *testi
 	}
 	if !strings.Contains(out[0].Content, "shot.png") || strings.Contains(out[0].Content, "notes.txt") {
 		t.Errorf("the note %q should name shot.png and not notes.txt", out[0].Content)
+	}
+}
+
+// Text files attached to a prompt go as text and take no picture slot; the
+// pictures attached to prompts are bounded with the rest, newest first, and
+// an older one left out is named in its own message.
+func TestTheRequestBudgetCoversEveryPictureAndOnlyPictures(t *testing.T) {
+	var files []llm.ImagePart
+	for i := 0; i < toolImagesMaxCount+5; i++ {
+		files = append(files, llm.ImagePart{DataURL: "data:text/plain;base64,aGk=", Name: fmt.Sprintf("n%02d.txt", i)})
+	}
+	history := []llm.Message{
+		{Role: llm.RoleUser, Content: "notes", ImageParts: files},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read"}}},
+		toolResultWith("r1", imagePart("shot.png")),
+	}
+	out := withToolImages(history, true, noToolImageFile)
+	if got := imageNames(out[len(out)-1]); strings.Join(got, ",") != "shot.png" {
+		t.Errorf("next to %d text files the request carries %v, want shot.png", len(files), got)
+	}
+	if n := conversationTokens(history, true) - conversationTokens([]llm.Message{history[0], history[1], {Role: llm.RoleTool, ToolCallID: "r1", Content: history[2].Content}}, true); n != imageTokensEach {
+		t.Errorf("the pictures of the request cost %d tokens, want one picture's %d", n, imageTokensEach)
+	}
+
+	var older, newer []llm.ImagePart
+	for i := 0; i < 15; i++ {
+		older = append(older, imagePart(fmt.Sprintf("old%02d.png", i)))
+		newer = append(newer, imagePart(fmt.Sprintf("new%02d.png", i)))
+	}
+	history = []llm.Message{
+		{Role: llm.RoleUser, Content: "first", ImageParts: older},
+		{Role: llm.RoleAssistant, Content: "ok"},
+		{Role: llm.RoleUser, Content: "second", ImageParts: newer},
+	}
+	out = withToolImages(history, true, noToolImageFile)
+	sent := len(out[0].ImageParts) + len(out[2].ImageParts)
+	if sent != toolImagesMaxCount || len(out[2].ImageParts) != 15 {
+		t.Fatalf("sent %d pictures (%d of the newer prompt), want %d with the newer prompt whole", sent, len(out[2].ImageParts), toolImagesMaxCount)
+	}
+	if !strings.Contains(out[0].Content, "old00.png") || !strings.Contains(out[0].Content, "left out") {
+		t.Errorf("the first prompt %q does not name what was left out", out[0].Content)
+	}
+	if conversationTokens(history, false) != conversationTokens([]llm.Message{{Role: llm.RoleUser, Content: "first"}, {Role: llm.RoleAssistant, Content: "ok"}, {Role: llm.RoleUser, Content: "second"}}, false) {
+		t.Error("a model without images is charged for pictures it is not sent")
+	}
+}
+
+// The copy a request is built from must be the picture that was saved: a link
+// planted under its name, or other bytes, count as a missing copy - named to
+// the model, never sent - and take no slot from an older picture that fits.
+func TestAToolPictureIsSentOnlyFromItsOwnCopy(t *testing.T) {
+	sessionDir := t.TempDir()
+	st := &session.State{ID: "sess_copies", CWD: t.TempDir(), SessionDir: sessionDir}
+	a := &Agent{state: st}
+	good := testPNG(3, 2, color.NRGBA{G: 255, A: 255})
+	asset, _, err := session.SaveToolImageAsset(sessionDir, "good.png", "image/png", good)
+	if err != nil {
+		t.Fatal(err)
+	}
+	part := llm.ImagePart{Name: "good.png", MIMEType: "image/png", Size: len(good), FilePath: asset}
+	if url, err := a.loadToolImage(part); err != nil || url != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(good) {
+		t.Fatalf("the saved copy loads as %.40q (%v)", url, err)
+	}
+
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("not for the model"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linked, _, _ := session.SaveToolImageAsset(sessionDir, "linked.png", "image/png", testPNG(2, 2, color.Black))
+	_ = os.Remove(linked)
+	if err := os.Symlink(secret, linked); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := a.loadToolImage(llm.ImagePart{Name: "linked.png", MIMEType: "image/png", Size: 70, FilePath: linked}); err == nil {
+		t.Error("a link planted under a copy's name was read")
+	}
+
+	changed, _, _ := session.SaveToolImageAsset(sessionDir, "changed.png", "image/png", testPNG(2, 3, color.White))
+	_ = os.Chmod(changed, 0o644)
+	if err := os.WriteFile(changed, testPNG(2, 3, color.Black), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.loadToolImage(llm.ImagePart{Name: "changed.png", MIMEType: "image/png", FilePath: changed}); err == nil {
+		t.Error("a copy whose bytes no longer match its name was read")
+	}
+
+	// A missing copy takes no slot: with the budget full but for one, the
+	// older picture that fits still goes.
+	history := []llm.Message{{Role: llm.RoleUser, Content: "look"}}
+	for i := 0; i < toolImagesMaxCount-1; i++ {
+		id := fmt.Sprintf("r%02d", i)
+		history = append(history, llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: id, Name: "read"}}}, toolResultWith(id, imagePart(fmt.Sprintf("p%02d.png", i))))
+	}
+	history = append(history,
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "gone", Name: "read"}}},
+		llm.Message{Role: llm.RoleTool, ToolCallID: "gone", Content: "x", ImageParts: []llm.ImagePart{{Name: "gone.png", MIMEType: "image/png", Size: 10, FilePath: filepath.Join(sessionDir, "assets", "gone-0000000000000000.png")}}})
+	history = append([]llm.Message{history[0],
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "first", Name: "read"}}}, toolResultWith("first", imagePart("first.png"))}, history[1:]...)
+	out := withToolImages(history, true, a.loadToolImage)
+	sent := map[string]bool{}
+	for _, m := range out {
+		for _, p := range m.ImageParts {
+			sent[p.Name] = true
+		}
+	}
+	if !sent["first.png"] || sent["gone.png"] || len(sent) != toolImagesMaxCount {
+		t.Errorf("sent %d pictures, first.png=%v gone.png=%v; want the missing copy skipped and the oldest picture in its slot", len(sent), sent["first.png"], sent["gone.png"])
 	}
 }
