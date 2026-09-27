@@ -403,3 +403,19 @@ func TestConversationTokensCountThePicturesARequestCarries(t *testing.T) {
 		t.Errorf("%d tool pictures: %d tokens, want about %d (only %d go out)", len(many), got, want, toolImagesMaxCount)
 	}
 }
+
+// Only pictures are held back from a model that cannot take them: a text file
+// attached to a prompt still goes, the providers write it as a labelled block.
+func TestWithToolImagesKeepsTheTextFilesOfAPromptForAModelWithoutImages(t *testing.T) {
+	notes := llm.ImagePart{DataURL: "data:text/plain;base64,aGVsbG8=", Name: "notes.txt"}
+	history := []llm.Message{
+		{Role: llm.RoleUser, Content: "look", ImageParts: []llm.ImagePart{imagePart("shot.png"), notes}},
+	}
+	out := withToolImages(history, false, noToolImageFile)
+	if len(out[0].ImageParts) != 1 || out[0].ImageParts[0].Name != "notes.txt" {
+		t.Fatalf("parts sent = %+v, want only notes.txt", out[0].ImageParts)
+	}
+	if !strings.Contains(out[0].Content, "shot.png") || strings.Contains(out[0].Content, "notes.txt") {
+		t.Errorf("the note %q should name shot.png and not notes.txt", out[0].Content)
+	}
+}

@@ -208,6 +208,7 @@ func TestLlmMsgsToCoddyOpenAIForSessionIncludesFullSizeAssetURL(t *testing.T) {
 	if err := os.WriteFile(saved, pngBytes(t), 0o444); err != nil {
 		t.Fatal(err)
 	}
+	writeThumbnail(t, dir, "photo one.png")
 	out := llmMsgsToCoddyOpenAIForSession("sess_files", dir, []llm.Message{
 		{
 			Role:    llm.RoleUser,
@@ -243,6 +244,7 @@ func TestLlmMsgsToCoddyOpenAIForSessionNamesThePicturesOfAToolResult(t *testing.
 	if err := os.WriteFile(saved, pngBytes(t), 0o444); err != nil {
 		t.Fatal(err)
 	}
+	writeThumbnail(t, dir, "shot-1a2b.png")
 	out := llmMsgsToCoddyOpenAIForSession("sess_files", dir, []llm.Message{{
 		Role:       llm.RoleTool,
 		ToolCallID: "r1",
@@ -291,5 +293,18 @@ func TestOpenAPIDescribesTheSessionAssetRoute(t *testing.T) {
 		if !bytes.Contains(bytes.ToLower([]byte(desc)), []byte(want)) {
 			t.Fatalf("description does not mention %q: %s", want, desc)
 		}
+	}
+}
+
+// writeThumbnail puts the bounded preview of an asset where the server looks
+// for it.
+func writeThumbnail(t *testing.T, assetsDir, assetName string) {
+	t.Helper()
+	thumb := session.ThumbnailPathInAssets(assetsDir, assetName)
+	if err := os.MkdirAll(filepath.Dir(thumb), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(thumb, pngBytes(t), 0o444); err != nil {
+		t.Fatal(err)
 	}
 }

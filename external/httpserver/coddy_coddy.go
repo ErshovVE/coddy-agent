@@ -1078,6 +1078,12 @@ func llmMsgsToCoddyOpenAI(msgs []llm.Message) []map[string]interface{} {
 // this session's bundle, and a link planted in that directory - the agent can
 // write there, and the prompt tells it where - would make it serve whatever it
 // points at.
+// isRegularFile reports whether path is a regular file, a link not followed.
+func isRegularFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
 func isAssetOf(assetsDir, path string) bool {
 	if assetsDir == "" || path == "" {
 		return false
@@ -1145,7 +1151,10 @@ func llmMsgsToCoddyOpenAIForSession(sessionID, assetsDir string, msgs []llm.Mess
 					"name":      name,
 					"mime_type": imagePartMIMEType(part),
 				}
-				if sessionID != "" && part.FilePath != "" && part.ThumbnailPath != "" {
+				// The preview address is given only for a thumbnail on disk, the
+				// way the original's is, so a card never loads a missing one.
+				if sessionID != "" && part.FilePath != "" && part.ThumbnailPath != "" &&
+					assetsDir != "" && isRegularFile(session.ThumbnailPathInAssets(assetsDir, filepath.Base(part.FilePath))) {
 					file["preview_url"] = session.AssetThumbnailRoute(sessionID, filepath.Base(part.FilePath))
 				}
 				// The full-size original, for a preview card to open enlarged.

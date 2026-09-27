@@ -73,3 +73,31 @@ func TestCodexSendsThePicturesOfAUserMessage(t *testing.T) {
 		}
 	}
 }
+
+// The Messages API and the Responses API take PNG, JPEG, GIF and WebP pictures.
+// Any other image type goes as what it is: an SVG is text and is sent as its
+// source, another type is named as not sent, and so is a data URL that is not
+// base64 - never dropped without a word, never a request the API refuses.
+func TestPicturesAProviderCannotTakeGoAsText(t *testing.T) {
+	msg := Message{Role: RoleUser, Content: "files", ImageParts: []ImagePart{
+		{Name: "logo.svg", DataURL: "data:image/svg+xml;base64," + base64.StdEncoding.EncodeToString([]byte("<svg/>"))},
+		{Name: "old.bmp", DataURL: "data:image/bmp;base64,Qk0="},
+		{Name: "raw.png", DataURL: "data:image/png,not-base64"},
+	}}
+	anthropic := newAnthropicProvider("claude-sonnet-4-5", "", "", nil, 8192, 0.7, "")
+	_, conv := anthropic.splitMessages([]Message{msg})
+	codex := newCodexProvider("gpt-5.6", filepath.Join(t.TempDir(), "auth.json"), true, "", nil, 0, "")
+	params := codex.buildParams([]Message{msg}, nil)
+	for name, v := range map[string]any{"anthropic": conv, "codex": params.Input} {
+		raw, _ := json.Marshal(v)
+		s := string(raw)
+		if strings.Contains(s, `"type":"image"`) || strings.Contains(s, `"type":"input_image"`) {
+			t.Errorf("%s sends a picture it cannot take: %s", name, s)
+		}
+		for _, want := range []string{`[File: logo.svg]\n`, "svg/", "old.bmp", "raw.png"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("%s does not name %s: %s", name, want, s)
+			}
+		}
+	}
+}

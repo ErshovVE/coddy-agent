@@ -59,6 +59,12 @@ func (s *Sender) sendPictures(sessionID string, images []session.ToolImage) {
 			s.log.Warn("telegram: read picture", "asset", img.Asset, "err", err)
 			continue
 		}
+		// The bytes decide, not the name: a file that is no picture (replaced
+		// since the call, damaged) is not posted, not even as a document.
+		if !strings.HasPrefix(http.DetectContentType(data), "image/") {
+			s.log.Warn("telegram: the saved picture is not an image", "asset", img.Asset)
+			continue
+		}
 		name := strings.TrimSpace(img.Name)
 		if name == "" {
 			name = img.Asset

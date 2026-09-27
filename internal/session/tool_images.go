@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -75,6 +76,9 @@ func SaveToolImageAsset(sessionDir, name, mimeType string, data []byte) (assetPa
 		base = "image"
 	}
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	// The asset name is also a segment of the asset address, which refuses a
+	// backslash on every host, while a Unix file name may hold one.
+	stem = strings.ReplaceAll(stem, "\\", "_")
 	if stem == "" {
 		stem = "image"
 	}
@@ -89,33 +93,48 @@ func SaveToolImageAsset(sessionDir, name, mimeType string, data []byte) (assetPa
 		ext = filepath.Ext(base)
 	}
 	sum := sha256.Sum256(data)
-	assetName := stem + "-" + hex.EncodeToString(sum[:6]) + ext
+	assetName := stem + "-" + hex.EncodeToString(sum[:8]) + ext
 
 	assetsDir := AssetsPath(sessionDir)
 	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
 		return "", "", fmt.Errorf("assets dir: %w", err)
 	}
 	assetPath = filepath.Join(assetsDir, assetName)
-	if info, statErr := os.Lstat(assetPath); statErr != nil || !info.Mode().IsRegular() {
+	// The name promises these bytes; a file under it holding others - stale,
+	// damaged, planted - is replaced rather than shown.
+	wrote := false
+	if !holds(assetPath, data) {
 		if err := writeReadOnly(assetPath, data); err != nil {
 			return "", "", fmt.Errorf("write asset %s: %w", assetName, err)
 		}
+		wrote = true
 	}
 	thumbPath = AssetThumbnailPath(sessionDir, assetName)
-	if info, statErr := os.Lstat(thumbPath); statErr == nil && info.Mode().IsRegular() {
+	if info, statErr := os.Lstat(thumbPath); !wrote && statErr == nil && info.Mode().IsRegular() {
 		return assetPath, thumbPath, nil
 	}
+	// From here on a failure costs the preview, never the copy.
 	thumb, ok := makeImageThumbnailWithin(data, toolImageThumbnailMaxPixels)
 	if !ok {
 		return assetPath, "", nil
 	}
 	if err := os.MkdirAll(AssetThumbnailsPath(sessionDir), 0o755); err != nil {
-		return "", "", fmt.Errorf("thumbnail dir: %w", err)
+		return assetPath, "", fmt.Errorf("thumbnail dir: %w", err)
 	}
 	if err := writeReadOnly(thumbPath, thumb); err != nil {
-		return "", "", fmt.Errorf("write thumbnail %s: %w", assetName, err)
+		return assetPath, "", fmt.Errorf("write thumbnail %s: %w", assetName, err)
 	}
 	return assetPath, thumbPath, nil
+}
+
+// holds reports whether path is a regular file with exactly data in it.
+func holds(path string, data []byte) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(data)) {
+		return false
+	}
+	existing, err := os.ReadFile(path)
+	return err == nil && bytes.Equal(existing, data)
 }
 
 // ToolImagesMeta returns meta with the pictures of a tool call under

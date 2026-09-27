@@ -313,22 +313,15 @@ func anthropicUserBlocks(m Message) []anthropic.ContentBlockParamUnion {
 	text := m.Content
 	var images []anthropic.ContentBlockParamUnion
 	for _, ip := range m.ImageParts {
-		mime := dataURLMIME(ip.DataURL)
-		if strings.HasPrefix(mime, "image/") {
-			if comma := strings.IndexByte(ip.DataURL, ','); comma > 0 && strings.Contains(ip.DataURL[:comma], ";base64") {
-				images = append(images, anthropic.NewImageBlockBase64(mime, ip.DataURL[comma+1:]))
-			}
-			continue
-		}
-		if !strings.HasPrefix(ip.DataURL, "data:") && strings.HasPrefix(ip.DataURL, "https://") {
+		kind, mime, payload := sortAttachment(ip)
+		switch {
+		case kind == attachedPicture && payload != "":
+			images = append(images, anthropic.NewImageBlockBase64(mime, payload))
+		case kind == attachedPicture:
 			images = append(images, anthropic.NewImageBlock(anthropic.URLImageSourceParam{URL: ip.DataURL}))
-			continue
+		default:
+			text += attachmentText(ip, kind, mime)
 		}
-		label := ip.Name
-		if label == "" {
-			label = "file"
-		}
-		text += fmt.Sprintf("\n\n[File: %s]\n%s", label, decodeDataURL(ip.DataURL))
 	}
 	if text == "" && len(images) > 0 {
 		return images

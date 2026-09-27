@@ -205,3 +205,60 @@ func TestSaveToolImageAssetMakesNoThumbnailOfAHugePicture(t *testing.T) {
 		t.Errorf("the tool picture cap %d is not below the attachment cap %d", toolImageThumbnailMaxPixels, assetThumbnailMaxPixels)
 	}
 }
+
+// A name is a file name on the host, but the asset name is also a segment of
+// the asset address, which refuses a backslash on every host.
+func TestSaveToolImageAssetNamesTheCopyForItsAddress(t *testing.T) {
+	dir := t.TempDir()
+	asset, _, err := SaveToolImageAsset(dir, `a\b.png`, "image/png", pngBytes(t, 2, 2, color.Black))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name := filepath.Base(asset); strings.ContainsAny(name, `\/`) {
+		t.Errorf("asset name %q keeps a separator", name)
+	}
+}
+
+// The copy is named by its content, so a file already under that name that
+// holds other bytes - stale, damaged, planted - is replaced, never shown.
+func TestSaveToolImageAssetReplacesAFileThatIsNotThePicture(t *testing.T) {
+	dir := t.TempDir()
+	picture := pngBytes(t, 3, 2, color.White)
+	asset, _, err := SaveToolImageAsset(dir, "shot.png", "image/png", picture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(asset, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(asset, []byte("not the picture"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	again, _, err := SaveToolImageAsset(dir, "shot.png", "image/png", picture)
+	if err != nil || again != asset {
+		t.Fatalf("saved again as %q (%v)", again, err)
+	}
+	if got, _ := os.ReadFile(asset); !bytes.Equal(got, picture) {
+		t.Error("the file under the picture's name still holds other bytes")
+	}
+}
+
+// A thumbnail that cannot be written costs the preview, not the copy: the
+// original is on disk and its address is still given.
+func TestSaveToolImageAssetKeepsTheCopyWhenTheThumbnailFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(AssetsPath(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A file where the thumbnails directory should be.
+	if err := os.WriteFile(AssetThumbnailsPath(dir), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asset, thumb, err := SaveToolImageAsset(dir, "shot.png", "image/png", pngBytes(t, 3, 2, color.White))
+	if asset == "" || thumb != "" || err == nil {
+		t.Fatalf("got asset %q thumb %q err %v, want the asset kept and the thumbnail error reported", asset, thumb, err)
+	}
+	if _, statErr := os.Stat(asset); statErr != nil {
+		t.Fatalf("the asset is not on disk: %v", statErr)
+	}
+}

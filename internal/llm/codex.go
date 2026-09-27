@@ -440,18 +440,14 @@ func (p *codexProvider) buildParams(messages []Message, tools []ToolDefinition) 
 			text := m.Content
 			var images responses.ResponseInputMessageContentListParam
 			for _, ip := range m.ImageParts {
-				if strings.HasPrefix(dataURLMIME(ip.DataURL), "image/") ||
-					(!strings.HasPrefix(ip.DataURL, "data:") && strings.HasPrefix(ip.DataURL, "https://")) {
-					image := responses.ResponseInputContentParamOfInputImage(responses.ResponseInputImageDetailAuto)
-					image.OfInputImage.ImageURL = openai.String(ip.DataURL)
-					images = append(images, image)
+				kind, mime, _ := sortAttachment(ip)
+				if kind != attachedPicture {
+					text += attachmentText(ip, kind, mime)
 					continue
 				}
-				label := ip.Name
-				if label == "" {
-					label = "file"
-				}
-				text += fmt.Sprintf("\n\n[File: %s]\n%s", label, decodeDataURL(ip.DataURL))
+				image := responses.ResponseInputContentParamOfInputImage(responses.ResponseInputImageDetailAuto)
+				image.OfInputImage.ImageURL = openai.String(ip.DataURL)
+				images = append(images, image)
 			}
 			content := responses.ResponseInputMessageContentListParam{
 				responses.ResponseInputContentParamOfInputText(text),

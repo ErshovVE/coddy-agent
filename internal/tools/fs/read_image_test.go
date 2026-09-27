@@ -405,3 +405,56 @@ func TestReadRefusesAnOversizedPictureWithoutLoadingIt(t *testing.T) {
 		t.Error("an oversized picture was attached")
 	}
 }
+
+// A GIF is small on disk for any canvas: its first frame is decoded to be sent,
+// so past 16 megapixels it is refused before that decode, not after it.
+func TestReadRefusesAGIFWhoseFrameIsTooLargeToDecode(t *testing.T) {
+	env, got := imageEnv(t)
+	// GIF89a, a logical screen of 5000x4000 and no colour table, then the
+	// trailer: all image.DecodeConfig reads.
+	gifHeader := []byte("GIF89a")
+	gifHeader = append(gifHeader, 0x88, 0x13, 0xA0, 0x0F, 0x00, 0x00, 0x00, 0x3B)
+	writeFile(t, env, "wide.gif", gifHeader)
+	_, err := runRead(env, `{"path":"wide.gif"}`)
+	if err == nil || !strings.Contains(err.Error(), "5000x4000") {
+		t.Fatalf("err = %v, want the frame size refused", err)
+	}
+	if len(*got) != 0 {
+		t.Error("the GIF was attached")
+	}
+}
+
+// A file cut anywhere is refused with an error, never a panic: every prefix of
+// a valid picture of each format goes through the checks.
+func TestReadSurvivesEveryPrefixOfAPicture(t *testing.T) {
+	var jpg bytes.Buffer
+	if err := jpeg.Encode(&jpg, solidImage(8, 6), nil); err != nil {
+		t.Fatal(err)
+	}
+	for name, whole := range map[string][]byte{
+		"p.png":  encodePNG(t, 6, 4),
+		"p.jpg":  jpg.Bytes(),
+		"p.webp": webpFile(vp8xChunk(8, 6, false), vp8lChunk(8, 6)),
+	} {
+		for n := 0; n <= len(whole); n++ {
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("%s cut to %d bytes panics: %v", name, n, r)
+					}
+				}()
+				kind := sniffKind(whole[:n])
+				if readImageFormats[kind] == "" {
+					return
+				}
+				w, h, err := imageSize(whole[:n], kind)
+				if err == nil {
+					err = imageComplete(whole[:n], kind)
+				}
+				if n < len(whole) && err == nil {
+					t.Errorf("%s cut to %d of %d bytes passes as %dx%d", name, n, len(whole), w, h)
+				}
+			}()
+		}
+	}
+}

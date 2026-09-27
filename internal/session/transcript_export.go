@@ -540,6 +540,9 @@ type ExportToolCall struct {
 	// the call (the turn was cancelled or is still running), an empty string
 	// when the tool returned nothing.
 	Result *string `json:"result,omitempty"`
+	// Pictures are the pictures the call showed the model (read on an image
+	// file): the copies kept with the session's assets.
+	Pictures []ExportAttachment `json:"pictures,omitempty"`
 }
 
 // ExportPlanDocument describes a plan document row.
@@ -601,6 +604,30 @@ const (
 )
 
 func isXMLSpace(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
+
+// exportPictures names the pictures a tool result carried by their saved
+// copies.
+func exportPictures(parts []llm.ImagePart) []ExportAttachment {
+	var out []ExportAttachment
+	for _, p := range parts {
+		out = append(out, ExportAttachment{Path: p.FilePath, Name: p.Name})
+	}
+	return out
+}
+
+// exportAttachmentLabels are the labels an export shows for attachments: the
+// saved path, else the name.
+func exportAttachmentLabels(atts []ExportAttachment) []string {
+	labels := make([]string, 0, len(atts))
+	for _, a := range atts {
+		label := a.Path
+		if label == "" {
+			label = a.Name
+		}
+		labels = append(labels, label)
+	}
+	return labels
+}
 
 // splitUserAttachments strips every hydrated attachment block (see
 // internal/agent resourceBlockToXMLAttachment) from a user message and lists
@@ -791,6 +818,7 @@ func BuildExportDocument(in ExportInput) ExportDocument {
 			if ref, ok := pending[m.ToolCallID]; ok {
 				result := m.Content
 				entries[ref.entry].ToolCalls[ref.call].Result = &result
+				entries[ref.entry].ToolCalls[ref.call].Pictures = exportPictures(m.ImageParts)
 				delete(pending, m.ToolCallID)
 				continue
 			}
@@ -1006,6 +1034,15 @@ func renderExportMarkdown(doc ExportDocument) []byte {
 						b.WriteByte('\n')
 					}
 				}
+				if len(tc.Pictures) > 0 {
+					labels := exportAttachmentLabels(tc.Pictures)
+					for i, l := range labels {
+						labels[i] = markdownCodeSpan(l)
+					}
+					b.WriteString("Pictures: ")
+					b.WriteString(strings.Join(labels, ", "))
+					b.WriteString("\n\n")
+				}
 			}
 		case ExportEntryToolResult:
 			writeMarkdownHeading(&b, "Tool result", markdownCodeSpan(e.ToolCallID), e.CreatedAt)
@@ -1168,6 +1205,18 @@ func renderExportHTML(doc ExportDocument) []byte {
 					} else {
 						writeHTMLPre(&b, "", *tc.Result)
 					}
+				}
+				if len(tc.Pictures) > 0 {
+					b.WriteString(`<p class="attachments">Pictures: `)
+					for i, l := range exportAttachmentLabels(tc.Pictures) {
+						if i > 0 {
+							b.WriteString(", ")
+						}
+						b.WriteString("<code>")
+						b.WriteString(html.EscapeString(l))
+						b.WriteString("</code>")
+					}
+					b.WriteString("</p>\n")
 				}
 				b.WriteString("</details>\n")
 			}

@@ -207,8 +207,18 @@ func withToolImages(msgs []llm.Message, readsImages bool, load func(llm.ImagePar
 		if m.Role != llm.RoleTool {
 			flush()
 			if !readsImages && len(m.ImageParts) > 0 {
-				m.Content = withAttachmentsLeftOut(m.Content, m.ImageParts)
-				m.ImageParts = nil
+				var files, pictures []llm.ImagePart
+				for _, p := range m.ImageParts {
+					if isPicture(p) {
+						pictures = append(pictures, p)
+					} else {
+						files = append(files, p)
+					}
+				}
+				if len(pictures) > 0 {
+					m.Content = withAttachmentsLeftOut(m.Content, pictures)
+				}
+				m.ImageParts = files
 			}
 			out = append(out, m)
 			continue
@@ -274,6 +284,15 @@ func newestToolImages(msgs []llm.Message, readsImages bool) map[[2]int]bool {
 		}
 	}
 	return kept
+}
+
+// isPicture reports whether an attached part is a picture rather than a file
+// the providers write out as a labelled text block.
+func isPicture(p llm.ImagePart) bool {
+	if p.DataURL == "" {
+		return strings.HasPrefix(p.MIMEType, "image/")
+	}
+	return strings.HasPrefix(p.DataURL, "data:image/") || strings.HasPrefix(p.DataURL, "https://")
 }
 
 // withAttachmentsLeftOut tells a model that cannot take pictures which ones

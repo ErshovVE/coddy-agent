@@ -12,7 +12,7 @@ models:
     multimodal: true
 ```
 
-Every provider type sends them: an OpenAI-compatible endpoint as `image_url` parts, Anthropic as image blocks, the Codex backend as `input_image` parts, Devin with the prompt. Mark a model this way only when it really accepts images; a text-only endpoint refuses a request that carries one.
+Every provider type sends them: an OpenAI-compatible endpoint as `image_url` parts, Anthropic as image blocks, the Codex backend as `input_image` parts, Devin with the prompt. Anthropic and the Codex backend take PNG, JPEG, GIF and WebP; an SVG attached to a prompt goes to them as its text, and a picture of another type is named in the message as not sent rather than failing the request. Mark a model this way only when it really accepts images; a text-only endpoint refuses a request that carries one.
 
 ## Reading an image file
 
@@ -43,7 +43,7 @@ What goes to the provider is built from that transcript on every request. An Ope
 
 A picture costs context like anything else the model reads, and it goes out with every request after the step that read it. A request carries at most 20 pictures and 20 MB of them: the pictures attached to prompts count first, and the pictures of tool results take what is left, newest first, a picture too large for the bytes left giving way to an older one that fits. That keeps a session of many screenshots within what a provider takes (the Anthropic API refuses a request over 32 MB, and wants pictures of at most 2000 pixels a side once a request holds more than 20); the step of a picture left out names it. When [result eviction](compaction.md#result-eviction) collapses an old `read`, its picture goes too. Either way the model reads the file again if it needs it. The context estimate counts every picture a request carries as about 1600 tokens, so eviction, [automatic compaction](compaction.md) and the context ring see a session of screenshots for what it costs.
 
-A session switched to a model without `multimodal` sends no picture at all, prompt attachments included, and the model is told which pictures the steps and the prompts came with.
+A session switched to a model without `multimodal` sends no picture at all, prompt attachments included, and the model is told which pictures the steps and the prompts came with; a text file attached to a prompt still goes, written out in the message.
 
 Coddy keeps one copy of every picture it showed the model, with the session's assets (`~/.coddy/sessions/<id>/assets/`), under the file's name plus a digest of its content. The result of the `read` names that copy, its type and size; the base64 the provider needs is built from the copy when a request goes out, so the transcript and the memory of a running session hold no second copy of the picture, and a picture read again unchanged is stored once. The surfaces show the same copy, so a screenshot overwritten a minute later still previews as the model saw it. If the copy is gone, the model is told so and reads the file again.
 

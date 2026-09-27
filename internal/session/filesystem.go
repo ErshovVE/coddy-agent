@@ -299,7 +299,13 @@ func AssetThumbnailsPath(sessionDir string) string {
 
 // AssetThumbnailPath returns the preview path corresponding to one saved asset.
 func AssetThumbnailPath(sessionDir, assetName string) string {
-	return filepath.Join(AssetThumbnailsPath(sessionDir), assetName+".png")
+	return ThumbnailPathInAssets(AssetsPath(sessionDir), assetName)
+}
+
+// ThumbnailPathInAssets is AssetThumbnailPath for a session's assets
+// directory itself.
+func ThumbnailPathInAssets(assetsDir, assetName string) string {
+	return filepath.Join(assetsDir, "thumbnails", assetName+".png")
 }
 
 // EnsureLayout creates session.json (if missing), messages.json, assets/, todos/, todos/archive/.

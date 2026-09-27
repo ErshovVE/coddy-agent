@@ -192,3 +192,26 @@ func TestAPictureIsNotResentAsADocumentAfterARateLimit(t *testing.T) {
 		t.Fatalf("the picture was sent again as a document after a 429: %+v", calls)
 	}
 }
+
+// The bytes are checked, not only the name: an asset that is not a picture
+// (replaced after the call, damaged) is not sent, not even as a document.
+func TestAnAssetThatIsNotAPictureIsNotSent(t *testing.T) {
+	f := newFakeAPI(t, tgfake.Options{})
+	dir := t.TempDir()
+	_, update := savedPicture(t, dir, "shot-1a.png")
+	path := filepath.Join(session.AssetsPath(dir), "shot-1a.png")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("-----BEGIN PRIVATE KEY-----"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := newSender(f.api, 5, 0, slog.Default(), richConfig{})
+	s.pictures = fixedSession{id: "sess_chat", dir: dir}
+
+	_ = s.SendSessionUpdate("sess_chat", update)
+
+	if calls := len(f.fake.Calls("sendPhoto")) + len(f.fake.Calls("sendDocument")); calls != 0 {
+		t.Fatalf("sent %d files for an asset that is not a picture", calls)
+	}
+}

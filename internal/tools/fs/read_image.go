@@ -35,6 +35,9 @@ const (
 	// readImageMaxSide is the widest and tallest picture a provider takes:
 	// the Anthropic API refuses one over 8000 pixels a side.
 	readImageMaxSide = 8000
+	// gifFrameMaxPixels bounds the first frame of a GIF read decodes to send
+	// it as a PNG: 16 megapixels, 16 MB as a palette image.
+	gifFrameMaxPixels = 16_000_000
 )
 
 // readImage answers read for a file whose content sniffs as a picture: it
@@ -67,6 +70,12 @@ func readImage(argPath, path string, data []byte, kind string, env *tooling.Env)
 	}
 
 	sent, sentType, note := data, kind, ""
+	if kind == "image/gif" && int64(w)*int64(h) > gifFrameMaxPixels {
+		// A GIF is small on disk for any canvas, and its first frame is
+		// decoded to be sent: the size decides before that decode.
+		return "", fmt.Errorf("read: %s is a GIF image of %dx%d, more than the %d megapixels read decodes a frame of; save a smaller copy and read that",
+			argPath, w, h, gifFrameMaxPixels/1_000_000)
+	}
 	if kind == "image/gif" {
 		// Not every provider takes an animated GIF, and telling an animated one
 		// from a still one means decoding every frame, which a small file of
@@ -261,7 +270,8 @@ func webpInfo(data []byte) (int, int, error) {
 
 // gifFirstFrame returns the first frame of a GIF as a PNG. gif.Decode stops
 // after that frame, so the rest of an animation is never decoded, and the
-// frame keeps its palette: no canvas of the whole picture is allocated.
+// frame is encoded as the palette image it decodes to, one byte a pixel, with
+// no RGBA copy of it; gifFrameMaxPixels bounds it before the decode.
 func gifFirstFrame(data []byte) ([]byte, error) {
 	frame, err := gif.Decode(bytes.NewReader(data))
 	if err != nil {

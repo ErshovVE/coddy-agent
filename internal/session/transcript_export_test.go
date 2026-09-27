@@ -779,3 +779,33 @@ func TestExportSessionWritesRenderedDocument(t *testing.T) {
 		t.Fatalf("written entries = %d", len(back.Entries))
 	}
 }
+
+// A read that showed the model a picture keeps the picture in the export: the
+// call names the copy the model was shown, in every format.
+func TestExportNamesThePicturesAToolCallShowedTheModel(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: llm.RoleUser, Content: "look"},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read", InputJSON: `{"path":"shot.png"}`}}},
+		{Role: llm.RoleTool, ToolCallID: "r1", Content: "shot.png: PNG image", ImageParts: []llm.ImagePart{
+			{Name: "shot.png", MIMEType: "image/png", FilePath: "/home/u/.coddy/sessions/s/assets/shot-1a2b3c4d5e6f7a8b.png"},
+		}},
+		{Role: llm.RoleAssistant, Content: "red"},
+	}
+	doc := BuildExportDocument(ExportInput{SessionID: "s", Messages: msgs})
+	var call *ExportToolCall
+	for i := range doc.Entries {
+		for j := range doc.Entries[i].ToolCalls {
+			if doc.Entries[i].ToolCalls[j].ID == "r1" {
+				call = &doc.Entries[i].ToolCalls[j]
+			}
+		}
+	}
+	if call == nil || len(call.Pictures) != 1 || call.Pictures[0].Name != "shot.png" || !strings.HasSuffix(call.Pictures[0].Path, "shot-1a2b3c4d5e6f7a8b.png") {
+		t.Fatalf("the read's call = %+v, want the picture named with its copy", call)
+	}
+	for format, body := range map[string][]byte{"markdown": renderExportMarkdown(doc), "html": renderExportHTML(doc)} {
+		if !strings.Contains(string(body), "Pictures") || !strings.Contains(string(body), "shot-1a2b3c4d5e6f7a8b.png") {
+			t.Errorf("the %s export does not name the picture:\n%s", format, body)
+		}
+	}
+}
