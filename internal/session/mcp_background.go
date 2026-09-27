@@ -35,7 +35,8 @@ type MCPServerConnect struct {
 	Tools int `json:"tools,omitempty"`
 	// Error says why a failed server did not connect.
 	Error string `json:"error,omitempty"`
-	// Hint is what the operator can do about a held server.
+	// Hint is what comes next: how to approve a held server, or that a
+	// server that did not answer in time is tried once more.
 	Hint string `json:"hint,omitempty"`
 }
 
@@ -121,9 +122,9 @@ func (m *Manager) connectNewSessionMCPServers(ctx context.Context, state *State)
 // context is the state's, not the request's: session/new has returned by the
 // time most servers answer. A reload or a teardown cancels it, and a result
 // that lands after either is closed rather than installed. Every server is
-// held to the per-server timeout and nothing is parked for a retry: a server
-// that failed is reported once, and a turn starts without it instead of
-// dialing it again.
+// held to the per-server timeout; one that did not answer within it is tried
+// once more at the session's next turn (noteConfiguredDial), and one that
+// failed otherwise is reported once and not dialed again.
 func (m *Manager) startBackgroundMCPConnect(state *State) {
 	cwd := state.GetCWD()
 	targets, held := m.configuredTargets(m.activeCfg(), cwd)
@@ -152,7 +153,8 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 	m.sendMCPConnectUpdate(state)
 	go func() {
 		results := m.dialConcurrently(ctx, targets, func(i int, r mcpDialResult) {
-			entry := MCPServerConnect{Name: r.Target.Server.Config.Name, State: MCPConnectStateConnected}
+			name := r.Target.Server.Config.Name
+			entry := MCPServerConnect{Name: name, State: MCPConnectStateConnected}
 			if r.Err != nil {
 				if ctx.Err() != nil {
 					// Superseded: the reload or the teardown that cancelled
@@ -164,6 +166,9 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 				entry.Tools = len(r.Client.Tools())
 			}
 			m.logDial(r)
+			if m.noteConfiguredDial(state, name, r.Err) {
+				entry.Hint = "The next prompt tries it once more"
+			}
 			// The targets come first in servers, in the same order.
 			if state.settleBackgroundMCP(gen, i, entry) {
 				m.sendMCPConnectUpdate(state)

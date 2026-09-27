@@ -33,8 +33,11 @@ footer counts them (`MCP 2/5`) until every one has answered. A prompt sent
 before that waits for its tool list on the status line (`Connecting MCP
 servers`), and Escape ends the wait like any other step. A server that fails
 or that the trust gate holds is said once as a row of the visible transcript,
-with what to do about it; a failed server is not dialed again at every
-prompt, and switching it off and on in `/mcp` tries it again. Resuming a
+with what to do about it. A server that did not answer in time is tried
+once more at the next prompt - the first start of an `npx` package can
+outlast the bound while the package installs - and one that failed
+otherwise, or twice, is not dialed again until its switch in `/mcp`, a
+reload or a new session. Resuming a
 session restores its current MCP notices after the transcript is cleared.
 Nothing reads the workspace tree: nested `AGENTS.md` files are read on demand, from the folders
 a tool enters (`docs/features/rules.md`), so a console opened in a home

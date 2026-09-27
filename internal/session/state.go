@@ -110,6 +110,14 @@ type State struct {
 	// those that should no longer run, the next turn's start dials the rest; a
 	// full reload covers them all.
 	mcpServersPending map[string]struct{}
+	// mcpNoAnswer names the configured servers whose dial got no answer
+	// within the per-server bound (Manager.noteConfiguredDial); an answer, a
+	// reload or the server's switch clears the name. mcpServersRetry are the
+	// ones of them waiting for their one more try, which only the start of
+	// the session's next turn takes (applyParkedMCPServers): unlike a
+	// switch's parked server, no reconcile picks them up before that.
+	mcpNoAnswer     map[string]struct{}
+	mcpServersRetry map[string]struct{}
 	// mcpConnect is the progress of a background dial of the configured
 	// servers (mcp_background.go); mcpConnectRecorded says one was started.
 	// mcpConnectDone is closed when it settles, mcpConnectCancel ends it
@@ -642,6 +650,75 @@ func (s *State) takeMCPServersPending() []string {
 	return names
 }
 
+// noteMCPNoAnswer records that the configured server name did not answer in
+// time and reports whether that is news: true the first time, so the caller
+// gives the server one more try, false once it has had it.
+func (s *State) noteMCPNoAnswer(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mcpClosed {
+		return false
+	}
+	if _, seen := s.mcpNoAnswer[name]; seen {
+		return false
+	}
+	if s.mcpNoAnswer == nil {
+		s.mcpNoAnswer = make(map[string]struct{})
+	}
+	s.mcpNoAnswer[name] = struct{}{}
+	return true
+}
+
+// clearMCPNoAnswer forgets that the server did not answer in time: it
+// answered, or its switch or trust changed.
+func (s *State) clearMCPNoAnswer(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.mcpNoAnswer, name)
+	delete(s.mcpServersRetry, name)
+}
+
+// resetMCPNoAnswer forgets every server that did not answer in time and
+// every one more try waiting, before a reload dials the configuration
+// afresh.
+func (s *State) resetMCPNoAnswer() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mcpNoAnswer = nil
+	s.mcpServersRetry = nil
+}
+
+// markMCPServerRetry keeps a configured server that did not answer in time
+// for its one more try at the start of the session's next turn.
+func (s *State) markMCPServerRetry(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mcpClosed {
+		return
+	}
+	if s.mcpServersRetry == nil {
+		s.mcpServersRetry = make(map[string]struct{})
+	}
+	s.mcpServersRetry[name] = struct{}{}
+}
+
+// moveMCPRetriesToPending hands the servers waiting for their one more try
+// to the parked set a turn's start dials.
+func (s *State) moveMCPRetriesToPending() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.mcpServersRetry) == 0 || s.mcpClosed {
+		return
+	}
+	if s.mcpServersPending == nil {
+		s.mcpServersPending = make(map[string]struct{})
+	}
+	for name := range s.mcpServersRetry {
+		s.mcpServersPending[name] = struct{}{}
+	}
+	s.mcpServersRetry = nil
+}
+
 // configuredMCPClientDeclared reports whether a configured server of that name
 // is connected to the session, and the fingerprint of the declaration it was
 // started from.
@@ -654,19 +731,6 @@ func (s *State) configuredMCPClientDeclared(name string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// hasConfiguredMCPClient reports whether a configured server of that name is
-// connected to the session.
-func (s *State) hasConfiguredMCPClient(name string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, client := range s.configuredMCPClients {
-		if client.Name() == name {
-			return true
-		}
-	}
-	return false
 }
 
 // closeConfiguredMCPClient disconnects one configured server from the session

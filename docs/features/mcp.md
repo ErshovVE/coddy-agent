@@ -425,16 +425,21 @@ confirm-then-commit workflow, and discovery safety checks.
 
 ## Error Handling
 
-- If an MCP server fails to start, the session still proceeds with a warning. A
-  server that failed is not dialed again at every turn: a settings reload, its
-  switch (`/mcp`, Settings → MCP servers) or a new session tries it again. Only a
-  dial cut short from outside - a save that reconnects many sessions under one
-  deadline, a request that ended - is retried at the session's next turn
+- If an MCP server fails to start, the session still proceeds with a warning,
+  and the server is not dialed again at every turn: a settings reload, its
+  switch (`/mcp`, Settings → MCP servers) or a new session tries it again
 - A server that starts and never answers `initialize` is given up after 20
-  seconds, and the warning names the bound. What the server's own command
-  does before it answers is up to the operator: a package runner such as
-  `npx -y <package>` asks its registry for the latest release on every start
-  and waits on the network, and a version in `args` (`<package>@<version>`)
-  is what keeps it off the network
+  seconds, and the warning names the bound. It is tried once more when the
+  session's next turn starts, because a first start can outlast the bound for
+  a good reason: `npx -y <package>` installs the package before it runs it
+  (16 s for `@modelcontextprotocol/server-everything` on a laptop with an
+  empty npm cache), and the next try starts it from the cache. A server that
+  does not answer the second time either stays down until one of the above.
+  A dial cut short from outside - a save that reconnects many sessions under
+  one deadline, a request that ended - is retried at the next turn as well
+- What the server's own command does before it answers is up to the
+  operator: a package runner such as `npx -y <package>` asks its registry for
+  the latest release on every start and waits on the network, and a version
+  in `args` (`<package>@<version>`) is what keeps it off the network
 - Failed MCP tool calls return an error observation to the LLM
 - The LLM can decide to retry, use alternative tools, or inform the user

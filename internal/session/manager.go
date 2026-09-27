@@ -208,6 +208,9 @@ func (m *Manager) RefreshMCPServer(ctx context.Context, name string) {
 	m.mu.RUnlock()
 	var wg sync.WaitGroup
 	for _, st := range states {
+		// The switch or the trust changed: the server gets a fresh dial,
+		// whatever it did before.
+		st.clearMCPNoAnswer(name)
 		st.markMCPServerPending(name)
 		wg.Add(1)
 		go func(st *State) {
@@ -344,9 +347,15 @@ func (m *Manager) ReloadConfigForSession(ctx context.Context, st *State) ([]stri
 		// here, from the configuration being installed.
 		m.supersedeBackgroundMCP(st)
 		st.takeDeferredConfiguredMCP()
-		var connectWarnings []string
-		nextGlobal, connectWarnings = m.dialConfiguredFor(ctx, next, st.GetCWD())
-		warnings = append(warnings, connectWarnings...)
+		st.resetMCPNoAnswer()
+		results, held := m.dialConfigured(ctx, next, st.GetCWD())
+		nextGlobal = connectedClients(results)
+		warnings = append(warnings, dialWarnings(results, held)...)
+		if ctx.Err() == nil {
+			for _, r := range results {
+				m.noteConfiguredDial(st, r.Target.Server.Config.Name, r.Err)
+			}
+		}
 	}
 
 	previous := m.storeConfig(next)
@@ -1602,28 +1611,26 @@ var mcpStartTimeout = mcpReloadTimeout
 // startConfiguredMCPServers dials every enabled configured server the trust
 // gate admits for the session's workspace and attaches the clients, under one
 // deadline. A server that never answers its handshake no longer holds the
-// session's creation forever: what the deadline cut short is parked, so the
-// session's next turn tries it again instead of running without it for good.
+// session's creation forever: it fails on the per-server bound and gets one
+// more try at the session's next turn (noteConfiguredDial), and what the
+// deadline cut short from outside is parked, so the next turn tries it again
+// instead of the session running without it for good.
 func (m *Manager) startConfiguredMCPServers(ctx context.Context, state *State) {
 	dialCtx, cancel := context.WithTimeout(ctx, mcpStartTimeout)
 	defer cancel()
-	for _, client := range m.dialConfiguredMCPServers(dialCtx, state.GetCWD()) {
-		state.addConfiguredMCPClient(client)
-	}
-	if dialCtx.Err() == nil {
-		return
-	}
-	cfg := m.activeCfg()
-	gate := mcp.NewTrustGate(cfg)
-	cwd := state.GetCWD()
-	for _, srv := range mcp.ListManagedServersTolerant(cfg, cwd, m.log) {
-		if srv.Config.Disabled || state.hasConfiguredMCPClient(srv.Config.Name) ||
-			gate.Evaluate(cwd, srv) != mcp.TrustStateAllowed {
+	results, _ := m.dialConfigured(dialCtx, m.activeCfg(), state.GetCWD())
+	for _, r := range results {
+		name := r.Target.Server.Config.Name
+		if r.Err != nil && dialCtx.Err() != nil {
+			state.markMCPServerPending(name)
+			m.log.Warn("MCP server did not start before its deadline; the session's next turn tries it again",
+				"server", name, "session", state.GetID())
 			continue
 		}
-		state.markMCPServerPending(srv.Config.Name)
-		m.log.Warn("MCP server did not start before its deadline; the session's next turn tries it again",
-			"server", srv.Config.Name, "session", state.GetID())
+		m.noteConfiguredDial(state, name, r.Err)
+		if r.Err == nil {
+			state.addConfiguredMCPClient(r.Client)
+		}
 	}
 }
 
@@ -1658,8 +1665,10 @@ func (m *Manager) bringInTurnMCPServers(ctx, turnCtx context.Context, state *Sta
 // applyParkedMCPServers dials the servers a switch parked on the session - a
 // session that was running a turn, or a dial the deadline cut short - before
 // the turn it runs under, so the turn is handed the tools of the switches as
-// they are now.
+// they are now. The servers that did not answer in time at their last dial
+// get their one more try here too (noteConfiguredDial).
 func (m *Manager) applyParkedMCPServers(ctx context.Context, state *State) {
+	state.moveMCPRetriesToPending()
 	if !state.hasPendingMCPServers() {
 		return
 	}
@@ -1760,7 +1769,9 @@ func (m *Manager) applyConfiguredMCPReload(ctx context.Context, st *State) bool 
 	// A background connect still running for the session is superseded:
 	// what it would install belongs to the configuration being replaced.
 	m.supersedeBackgroundMCP(st)
-	clients := m.dialConfiguredMCPServers(ctx, st.GetCWD())
+	st.resetMCPNoAnswer()
+	results, _ := m.dialConfigured(ctx, m.activeCfg(), st.GetCWD())
+	clients := connectedClients(results)
 	if err := ctx.Err(); err != nil {
 		for _, client := range clients {
 			_ = client.Close()
@@ -1769,6 +1780,9 @@ func (m *Manager) applyConfiguredMCPReload(ctx context.Context, st *State) bool 
 		m.log.Warn("configured MCP reload ran out of time; keeping the current servers",
 			"session", st.GetID(), "error", err)
 		return false
+	}
+	for _, r := range results {
+		m.noteConfiguredDial(st, r.Target.Server.Config.Name, r.Err)
 	}
 	st.replaceConfiguredMCPClients(clients)
 	return true
@@ -1879,8 +1893,10 @@ func (m *Manager) reconcileConfiguredMCPServer(ctx context.Context, st *State, g
 	}
 	if err != nil {
 		m.log.Warn("failed to connect MCP server", "server", name, "session", st.GetID(), "error", err)
+		m.noteConfiguredDial(st, name, err)
 		return
 	}
+	m.noteConfiguredDial(st, name, nil)
 	st.addConfiguredMCPClient(client)
 	m.log.Info("connected MCP server", "name", name, "session", st.GetID(),
 		"transport", mcp.EffectiveTransport(want.Config), "tools", len(client.Tools()))

@@ -33,6 +33,11 @@ import (
 // deadline.
 const defaultMCPConnectTimeout = 20 * time.Second
 
+// errMCPNoAnswer marks a dial the per-server bound gave up on: the server
+// started, or its address took the connection, and initialize got no answer
+// in time.
+var errMCPNoAnswer = errors.New("no answer to initialize")
+
 // mcpDialTarget is one server to connect: its declaration and the connect
 // call, which goes through the trust gate for configured servers so nothing
 // spawns that the gate did not admit right before the spawn.
@@ -102,18 +107,45 @@ func (m *Manager) configuredTargets(cfg *config.Config, cwd string) ([]mcpDialTa
 }
 
 // dialOne connects one target under its own copy of the per-server timeout.
-// A server that did not answer within it fails with an error that names the
-// bound; the caller's ctx ending is reported as that ctx's error, so a
-// caller can tell a dial it cut short from a server that failed.
+// A server that did not answer within it fails with errMCPNoAnswer and the
+// bound in the message; the caller's ctx ending is reported as that ctx's
+// error, so a caller can tell a dial it cut short from a server that failed.
 func (m *Manager) dialOne(ctx context.Context, target mcpDialTarget) (*mcp.Client, error) {
 	timeout := m.connectTimeout()
 	srvCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	client, err := target.Connect(srvCtx)
 	if err != nil && ctx.Err() == nil && errors.Is(srvCtx.Err(), context.DeadlineExceeded) {
-		err = fmt.Errorf("no answer to initialize within %s: %w", timeout, err)
+		err = fmt.Errorf("%w within %s: %w", errMCPNoAnswer, timeout, err)
 	}
 	return client, err
+}
+
+// noteConfiguredDial keeps the session's record of the configured servers
+// that did not answer in time, after one of them was dialed. An answer
+// clears the server. A server the per-server bound gave up on is kept for
+// one more try at the start of the session's next turn - a first start that
+// installs a package (npx, uvx) can outlast the bound, and the next try
+// starts it from the package cache - but only once: a server that never
+// answers must not cost every turn its bound. It reports whether the server
+// was kept for that try.
+func (m *Manager) noteConfiguredDial(st *State, name string, err error) bool {
+	if err == nil {
+		st.clearMCPNoAnswer(name)
+		return false
+	}
+	if !errors.Is(err, errMCPNoAnswer) {
+		return false
+	}
+	if !st.noteMCPNoAnswer(name) {
+		m.log.Warn("MCP server did not answer in time again; it stays down until a reload, its switch or a new session",
+			"server", name, "session", st.GetID())
+		return false
+	}
+	st.markMCPServerRetry(name)
+	m.log.Warn("MCP server did not answer in time; the session's next turn tries it once more",
+		"server", name, "session", st.GetID())
+	return true
 }
 
 // dialConcurrently connects every target at once, each under its own copy of
@@ -180,45 +212,59 @@ func (m *Manager) logDial(r mcpDialResult) {
 		"transport", mcp.EffectiveTransport(r.Target.Server.Config), "tools", len(r.Client.Tools()))
 }
 
-// dialConfiguredFor connects the enabled configured servers of cfg the trust
-// gate admits for cwd, all at once, and returns the clients in configuration
-// order - the tool list a model is handed keeps its order from one session
-// start to the next, which the provider's prompt cache needs - with one
-// warning per server that did not start. ReloadConfigForSession dials the
-// configuration it is about to install, which the manager does not hold yet,
-// so the config is a parameter here.
-func (m *Manager) dialConfiguredFor(ctx context.Context, cfg *config.Config, cwd string) ([]*mcp.Client, []string) {
+// dialConfigured connects the enabled configured servers of cfg the trust
+// gate admits for cwd, all at once, and logs why a held one was not started
+// and how every dial ended - except the ones ctx cut short, which the caller
+// reports as a whole. Session creation, the subagent spawn and the reloads
+// all go through here, so none of them can reach a spawn without
+// TrustGate.Connect: a project-local .coddy/mcp.json stays cold until its
+// exact declaration is approved. The dial costs the slowest server, not the
+// sum of them, and never more than the per-server timeout. The results keep
+// configuration order - the tool list a model is handed keeps its order from
+// one session start to the next, which the provider's prompt cache needs.
+// cfg is a parameter because ReloadConfigForSession dials the configuration
+// it is about to install, which the manager does not hold yet.
+func (m *Manager) dialConfigured(ctx context.Context, cfg *config.Config, cwd string) ([]mcpDialResult, []mcpHeldServer) {
 	targets, held := m.configuredTargets(cfg, cwd)
-	var warnings []string
 	for _, h := range held {
 		m.logHeld(cwd, h)
+	}
+	results := m.dialConcurrently(ctx, targets, nil)
+	for _, r := range results {
+		if r.Err != nil && ctx.Err() != nil {
+			continue
+		}
+		m.logDial(r)
+	}
+	return results, held
+}
+
+// connectedClients returns the clients of the dials that answered, in order.
+func connectedClients(results []mcpDialResult) []*mcp.Client {
+	clients := make([]*mcp.Client, 0, len(results))
+	for _, r := range results {
+		if r.Err == nil && r.Client != nil {
+			clients = append(clients, r.Client)
+		}
+	}
+	return clients
+}
+
+// dialWarnings says, one line per server, why a configured server did not
+// start: held by the trust gate, or failed.
+func dialWarnings(results []mcpDialResult, held []mcpHeldServer) []string {
+	var warnings []string
+	for _, h := range held {
 		if h.Blocked != nil {
 			warnings = append(warnings, fmt.Sprintf("connect MCP %s: %v", h.Server.Config.Name, h.Blocked))
 		}
 	}
-	clients := make([]*mcp.Client, 0, len(targets))
-	for _, r := range m.dialConcurrently(ctx, targets, nil) {
-		m.logDial(r)
+	for _, r := range results {
 		if r.Err != nil {
 			warnings = append(warnings, fmt.Sprintf("connect MCP %s: %v", r.Target.Server.Config.Name, r.Err))
-			continue
 		}
-		clients = append(clients, r.Client)
 	}
-	return clients, warnings
-}
-
-// dialConfiguredMCPServers connects every enabled configured server the trust
-// gate admits for cwd and returns the clients without attaching them to a
-// session. Session creation, the subagent spawn and the settings hot reload
-// all go through here, so none of them can reach a spawn without
-// TrustGate.Connect: a project-local .coddy/mcp.json stays cold until its
-// exact declaration is approved. The servers are dialed concurrently, so the
-// call costs the slowest server, not the sum of them, and never more than
-// the per-server timeout.
-func (m *Manager) dialConfiguredMCPServers(ctx context.Context, cwd string) []*mcp.Client {
-	clients, _ := m.dialConfiguredFor(ctx, m.activeCfg(), cwd)
-	return clients
+	return warnings
 }
 
 // connectSessionMCPServers connects the servers an ACP client sent with

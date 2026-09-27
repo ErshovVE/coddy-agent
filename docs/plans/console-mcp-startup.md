@@ -216,6 +216,16 @@ rebuilt on that machinery rather than beside it:
   dial cut short from outside (a save reconnecting many sessions, a request
   that ended) is parked. The single-server reconcile dials through the same
   bound.
+- A server that got no answer within its bound is tried exactly once more,
+  when the session's next turn starts (`noteConfiguredDial`), and then left
+  alone until a reload, its switch or a new session. The first start of an
+  `npx -y` package installs it: `@modelcontextprotocol/server-everything`
+  took 16.4 s with an empty npm cache on the operator's laptop, close to the
+  bound, and a slower network or a heavier package passes it. Killed at the
+  bound, npx keeps what it downloaded, and the next try starts from the
+  cache. The set of those servers is kept apart from the servers a switch
+  parks, because `RefreshMCPServer` drains the parked set in a loop and would
+  otherwise spend the one more try at once.
 - The console connects a restored session (`coddy -c`, `/resume`) in the
   background as it does a new one: it loads a session only to continue it.
   Every other surface keeps #382's rule.

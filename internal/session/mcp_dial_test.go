@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,7 +62,12 @@ func TestGatedMCPHelperProcess(t *testing.T) {
 	if os.Getenv(reloadTestMCPHelperEnv) != "1" || started == "" {
 		return
 	}
-	_ = os.WriteFile(started, []byte("1"), 0o644)
+	// One line per spawn, so a test can count how often the server was
+	// started.
+	if f, err := os.OpenFile(started, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		_, _ = f.WriteString("started\n")
+		_ = f.Close()
+	}
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
 	for scanner.Scan() {
@@ -109,6 +115,15 @@ func waitForFile(t *testing.T, path string, timeout time.Duration) bool {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return false
+}
+
+// spawns counts how often the gated server behind started was started.
+func spawns(started string) int {
+	data, err := os.ReadFile(started)
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(data), "started\n")
 }
 
 func clientNames(st *State) []string {
@@ -197,7 +212,8 @@ func TestExpiredContextSpawnsNothing(t *testing.T) {
 	mgr := NewManager(reloadTestConfig(srv), mcpTestSender{}, nil, slog.Default(), t.TempDir(), nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if got := mgr.dialConfiguredMCPServers(ctx, t.TempDir()); len(got) != 0 {
+	results, _ := mgr.dialConfigured(ctx, mgr.activeCfg(), t.TempDir())
+	if got := connectedClients(results); len(got) != 0 {
 		t.Fatalf("expired dial returned %d clients", len(got))
 	}
 	if waitForFile(t, started, 300*time.Millisecond) {
@@ -213,7 +229,8 @@ func TestReloadWarningsNameEveryServerThatDidNotStart(t *testing.T) {
 	broken := config.MCPServerConfig{Type: "stdio", Name: "broken", Command: filepath.Join(dir, "missing-binary")}
 	mgr := NewManager(reloadTestConfig(), mcpTestSender{}, nil, slog.Default(), t.TempDir(), nil)
 	mgr.SetMCPConnectTimeoutForTest(200 * time.Millisecond)
-	clients, warnings := mgr.dialConfiguredFor(context.Background(), reloadTestConfig(hung, broken, reloadTestMCPServer("good")), t.TempDir())
+	results, held := mgr.dialConfigured(context.Background(), reloadTestConfig(hung, broken, reloadTestMCPServer("good")), t.TempDir())
+	clients, warnings := connectedClients(results), dialWarnings(results, held)
 	t.Cleanup(func() {
 		for _, c := range clients {
 			_ = c.Close()
@@ -229,5 +246,110 @@ func TestReloadWarningsNameEveryServerThatDidNotStart(t *testing.T) {
 		if len(warnings[i]) < len(prefix) || warnings[i][:len(prefix)] != prefix {
 			t.Fatalf("warning %d = %q, want prefix %q", i, warnings[i], prefix)
 		}
+	}
+}
+
+// promptNames runs one turn on the session and returns the MCP clients the
+// turn found when it started.
+func promptNames(t *testing.T, mgr *Manager, sessionID string, entered <-chan []string) []string {
+	t.Helper()
+	if _, err := mgr.HandleSessionPrompt(context.Background(), acp.SessionPromptParams{
+		SessionID: sessionID, Prompt: []acp.ContentBlock{{Type: "text", Text: "go"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case names := <-entered:
+		return names
+	case <-time.After(10 * time.Second):
+		t.Fatal("the turn never reached its runner")
+		return nil
+	}
+}
+
+// namesRunner is a turn that reports the MCP clients it found.
+func namesRunner(entered chan<- []string) AgentRunner {
+	return func(_ context.Context, st *State, _ []acp.ContentBlock, _ acp.UpdateSender) (string, error) {
+		entered <- clientNames(st)
+		return string(acp.StopReasonEndTurn), nil
+	}
+}
+
+// TestSlowFirstStartIsTriedOnceMoreAtTheNextTurn: a server that outlasts the
+// per-server bound on its first start - an npx package still installing -
+// is dialed once more when the session's next turn starts, and connects.
+func TestSlowFirstStartIsTriedOnceMoreAtTheNextTurn(t *testing.T) {
+	dir := t.TempDir()
+	started, release := filepath.Join(dir, "started"), filepath.Join(dir, "release")
+	entered := make(chan []string, 4)
+	mgr := NewManager(reloadTestConfig(gatedMCPServer("slow", started, release)), mcpTestSender{}, namesRunner(entered), slog.Default(), t.TempDir(), nil)
+	mgr.SetMCPConnectTimeoutForTest(300 * time.Millisecond)
+	res, err := mgr.HandleSessionNew(context.Background(), acp.SessionNewParams{CWD: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := mgr.SessionByID(res.SessionID)
+	t.Cleanup(st.CloseAll)
+	if names := clientNames(st); len(names) != 0 {
+		t.Fatalf("clients after the first start = %v, want none", names)
+	}
+	// The install finished meanwhile: the server answers from now on.
+	if err := os.WriteFile(release, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if names := promptNames(t, mgr, res.SessionID, entered); len(names) != 1 || names[0] != "slow" {
+		t.Fatalf("the first turn found %v, want [slow]", names)
+	}
+	if n := spawns(started); n != 2 {
+		t.Fatalf("the server was started %d times, want 2", n)
+	}
+}
+
+// TestServerThatNeverAnswersIsTriedTwiceAtMost: a server that never answers
+// costs the session start and the next turn their bound, and no turn after
+// that; its switch gives it a fresh dial.
+func TestServerThatNeverAnswersIsTriedTwiceAtMost(t *testing.T) {
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	entered := make(chan []string, 4)
+	mgr := NewManager(reloadTestConfig(gatedMCPServer("hung", started, filepath.Join(dir, "never")), reloadTestMCPServer("good")),
+		mcpTestSender{}, namesRunner(entered), slog.Default(), t.TempDir(), nil)
+	mgr.SetMCPConnectTimeoutForTest(200 * time.Millisecond)
+	res, err := mgr.HandleSessionNew(context.Background(), acp.SessionNewParams{CWD: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := mgr.SessionByID(res.SessionID)
+	t.Cleanup(st.CloseAll)
+	for turn := 1; turn <= 3; turn++ {
+		if names := promptNames(t, mgr, res.SessionID, entered); len(names) != 1 || names[0] != "good" {
+			t.Fatalf("turn %d found %v, want [good]", turn, names)
+		}
+	}
+	if n := spawns(started); n != 2 {
+		t.Fatalf("the server that never answers was started %d times over the start and three turns, want 2", n)
+	}
+	mgr.RefreshMCPServer(context.Background(), "hung")
+	if n := spawns(started); n != 3 {
+		t.Fatalf("after its switch the server was started %d times in all, want 3", n)
+	}
+}
+
+// TestBackgroundNoAnswerIsTriedOnceMoreAtTheFirstPrompt: the console's
+// background connect says a server that did not answer in time is tried
+// once more, and the first prompt does try it.
+func TestBackgroundNoAnswerIsTriedOnceMoreAtTheFirstPrompt(t *testing.T) {
+	entered := make(chan []string, 4)
+	f := newBackgroundFixture(t, namesRunner(entered), func(m *Manager) { m.SetMCPConnectTimeoutForTest(300 * time.Millisecond) })
+	if !waitUntil(t, 10*time.Second, func() bool { s, _ := f.st.MCPConnectSnapshot(); return s.Done }) {
+		t.Fatal("the dial never settled")
+	}
+	snap, _ := f.st.MCPConnectSnapshot()
+	if len(snap.Servers) != 1 || snap.Servers[0].State != MCPConnectStateFailed || !strings.Contains(snap.Servers[0].Hint, "once more") {
+		t.Fatalf("snapshot = %+v, want the server failed with the retry hint", snap.Servers)
+	}
+	f.releaseServer()
+	if names := promptNames(t, f.mgr, f.st.GetID(), entered); len(names) != 1 || names[0] != "gated" {
+		t.Fatalf("the first prompt found %v, want [gated]", names)
 	}
 }
