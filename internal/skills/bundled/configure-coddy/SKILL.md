@@ -98,10 +98,11 @@ Coddy discovers skills from `skills.dirs`. Defaults are `~/.agents/skills`, `${C
 
 The binary carries a standard delivery of skills - `configure-coddy` and the `rpa-*` workflow skills - and writes them into `${CODDY_HOME}/skills` the first time it sees they are missing, recording what it handed over in `${CODDY_HOME}/skills/.bundled.json`. They are ordinary skills once written: editable, disable-able, deletable. A release carrying a newer version of one replaces the copy on disk, and so does a release meeting a copy that declares no version at all - so tell a user who has edited a delivered skill to raise its `metadata.version` (a top-level `version:` in older files) above the delivered one. A skill they deleted is not written again.
 
-Prefer Coddy's installer for remote sources:
+Prefer Coddy's installer for remote sources. Adding a marketplace installs nothing; a plugin of it is installed by name, and a source given without `@` is installed whole:
 
 ```text
 coddy plugin marketplace add <owner/repo-or-url>
+coddy plugin install <plugin>@<marketplace>
 coddy plugin install <owner/repo-or-url>
 ```
 

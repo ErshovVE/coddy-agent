@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,6 +81,31 @@ func TestPluginSourceUnmarshal(t *testing.T) {
 			json: `{"repo":"a/b"}`,
 			want: PluginSource{Kind: "github", Repo: "a/b"},
 		},
+		{
+			name: "archive object with sha256",
+			json: `{"source":"archive","url":"https://neuraldeep.ru/skapi/plugins/demo.zip","sha256":" ` + testDigest + ` "}`,
+			want: PluginSource{Kind: "archive", URL: "https://neuraldeep.ru/skapi/plugins/demo.zip", SHA256: testDigest},
+		},
+		{
+			name: "archive object without sha256",
+			json: `{"source":"archive","url":"https://neuraldeep.ru/skapi/plugins/demo.zip"}`,
+			want: PluginSource{Kind: "archive", URL: "https://neuraldeep.ru/skapi/plugins/demo.zip"},
+		},
+		{
+			name: "url object naming a zip stays a git url",
+			json: `{"url":"https://example.com/plugins/demo.zip"}`,
+			want: PluginSource{Kind: "url", URL: "https://example.com/plugins/demo.zip"},
+		},
+		{
+			name: "url object with the url keyword naming a zip stays a git url",
+			json: `{"source":"url","url":"https://example.com/plugins/demo.zip","sha256":"` + testDigest + `"}`,
+			want: PluginSource{Kind: "url", URL: "https://example.com/plugins/demo.zip", SHA256: testDigest},
+		},
+		{
+			name: "string naming a zip stays a git url",
+			json: `"https://example.com/plugins/demo.zip"`,
+			want: PluginSource{Kind: "url", URL: "https://example.com/plugins/demo.zip"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -91,6 +117,32 @@ func TestPluginSourceUnmarshal(t *testing.T) {
 				t.Errorf("got %+v, want %+v", ps, tt.want)
 			}
 		})
+	}
+}
+
+// testDigest is a well-formed sha256 (of the empty input).
+const testDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// TestMarketplaceDecodesTheCatalogueArchiveEntry decodes the manifest the
+// neuraldeep.ru catalogue serves per skill: one plugin whose source is an
+// archive, next to fields Coddy does not use.
+func TestMarketplaceDecodesTheCatalogueArchiveEntry(t *testing.T) {
+	data := `{"name":"neuraldeep","owner":{"name":"NeuralDeep","url":"https://neuraldeep.ru"},` +
+		`"plugins":[{"name":"demo","description":"A demo skill",` +
+		`"source":{"source":"archive","url":"https://neuraldeep.ru/skapi/plugins/demo.zip"},` +
+		`"homepage":"https://neuraldeep.ru/skills/demo","repository":"https://github.com/o/r",` +
+		`"author":{"name":"o"}}]}`
+	var mf Marketplace
+	if err := json.Unmarshal([]byte(data), &mf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(mf.Plugins) != 1 {
+		t.Fatalf("plugins = %+v", mf.Plugins)
+	}
+	p := mf.Plugins[0]
+	want := PluginSource{Kind: "archive", URL: "https://neuraldeep.ru/skapi/plugins/demo.zip"}
+	if p.Name != "demo" || p.Description != "A demo skill" || p.Source != want {
+		t.Errorf("plugin = %+v, want demo with source %+v", p, want)
 	}
 }
 
@@ -252,6 +304,8 @@ func TestInstallFromDirWritesManagedDirAndLock(t *testing.T) {
 // local git repo: clone → marketplace manifest with a relative ("path") plugin
 // → locate nested SKILL.md → copy into ManagedDir → lockfile. Git-gated.
 func TestSyncFromLocalMarketplaceGit(t *testing.T) {
+	// Sync covers the built-in marketplace too, a real GitHub address.
+	offlineSystemSources(t)
 	if !gitws.GitAvailable() {
 		t.Skip("git binary not available")
 	}
@@ -788,4 +842,34 @@ func offlineSystemSources(t *testing.T) {
 	prev := SystemSources
 	SystemSources = nil
 	t.Cleanup(func() { SystemSources = prev })
+}
+
+// TestInstallRefusesNamesOfTheManagedDirsOwnFiles: a skill whose name starts
+// with a dot would take the place of .remote.json, .marketplaces.json or a
+// staging copy in the managed dir - and the loader skips dot names anyway - so
+// the installer refuses it and leaves the lock as it was.
+func TestInstallRefusesNamesOfTheManagedDirsOwnFiles(t *testing.T) {
+	src := t.TempDir()
+	writeSkill(t, filepath.Join(src, "skills", "evil"), ".remote.json")
+	writeSkill(t, filepath.Join(src, "skills", "good"), "good")
+	managed := t.TempDir()
+	lock := map[string]RemoteEntry{"older": {Source: "owner/older"}}
+	if err := writeRemoteLock(managed, lock); err != nil {
+		t.Fatal(err)
+	}
+	res := &SyncResult{}
+	err := installFromDir(src, RemoteEntry{Source: "evil/market"}, managed, lock, res)
+	if err == nil || !strings.Contains(err.Error(), `".remote.json"`) {
+		t.Fatalf("installFromDir = %v, want the dot name refused", err)
+	}
+	if strings.Join(res.Added, ",") != "good" || len(res.Updated) != 0 {
+		t.Errorf("result = %+v, want only good added", res)
+	}
+	if err := writeRemoteLock(managed, lock); err != nil {
+		t.Fatalf("the lock can no longer be written: %v", err)
+	}
+	got := readRemoteLock(managed)
+	if _, ok := got["older"]; !ok || len(got) != 2 {
+		t.Fatalf("lock = %+v, want older and good", got)
+	}
 }
