@@ -501,7 +501,7 @@ func UISchemaMap() map[string]interface{} {
 						"default_headers": map[string]interface{}{
 							"type":                 "object",
 							"title":                "Default headers",
-							"description":          "Headers every request sends unless the call names them itself, such as a browser User-Agent for a site that turns tools away. A call's own headers win, and an empty value leaves a header out. They go to every destination, so keep credentials out unless that is the intent; Host, Content-Type, Content-Length, Transfer-Encoding and Proxy-Authorization are refused, and webfetch and the model providers never send these.",
+							"description":          "Headers every request sends unless the call names them itself, such as a browser User-Agent for a site that turns tools away. A call's own headers win, and an empty value leaves a header out. They go to every destination, so keep credentials out unless that is the intent; Host, Content-Type, Content-Length, Transfer-Encoding, the hop-by-hop headers and Proxy-Authorization are refused, and webfetch and the model providers never send these.",
 							"additionalProperties": map[string]interface{}{"type": "string"},
 						},
 					},

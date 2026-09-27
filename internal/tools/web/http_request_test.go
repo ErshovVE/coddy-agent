@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/EvilFreelancer/coddy-agent/internal/config"
 	"github.com/EvilFreelancer/coddy-agent/internal/tooling"
 )
 
@@ -787,6 +788,8 @@ func TestHTTPRequestRefusesADefaultHeaderNotMeantForEveryRequest(t *testing.T) {
 		"Transfer-Encoding":   "chunked",
 		"Content-Type":        "application/json",
 		"Proxy-Authorization": "Basic dTpw",
+		"Upgrade":             "h2c",
+		"Connection":          "close",
 		"Bad Name":            "x",
 		"X-Split":             "a\r\nInjected: b",
 	} {
@@ -810,16 +813,17 @@ func TestHTTPRequestDescribeNamesTheConfiguredHeaders(t *testing.T) {
 	text := req.Describe()
 	for _, want := range []string{
 		"User-Agent: " + browserUA,
-		"X-Client: coddy-lab",
+		"X-Client: <redacted>",
 		"Accept: text/html",
-		"Headers from tools.http_request.default_headers: User-Agent, X-Client\n",
+		// X-Off is left out by the configuration: named, never sent.
+		"Headers from tools.http_request.default_headers: User-Agent, X-Client, X-Off (not sent)\n",
 	} {
 		if !strings.Contains(text+"\n", want) {
 			t.Errorf("description does not show %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "X-Off") {
-		t.Errorf("a header the configuration leaves out is shown:\n%s", text)
+	if strings.Contains(text, "X-Off:") {
+		t.Errorf("a header the configuration leaves out is shown as sent:\n%s", text)
 	}
 	plain, err := ParseHTTPRequest(`{"url":"https://api.example.com/items"}`, t.TempDir())
 	if err != nil {
@@ -856,7 +860,12 @@ func TestWebFetchAndMentionsDoNotSendTheDefaultHeaders(t *testing.T) {
 }
 
 func TestHTTPRequestDescribeKeepsAConfiguredCredentialOutOfThePrompt(t *testing.T) {
-	defaults := map[string]string{"Authorization": "Bearer t0p-secret", "X-Api-Key": "k3y", "User-Agent": browserUA}
+	// A credential hides under any name: the prompt shows the configured value
+	// of a header that describes the client and of no other.
+	defaults := map[string]string{
+		"Authorization": "Bearer t0p-secret", "X-Api-Key": "k3y", "X-Auth": "s3ss", "Authentication": "Bearer 0ther",
+		"User-Agent": browserUA, "Accept-Language": "en-US", "Sec-Ch-Ua-Platform": `"Linux"`,
+	}
 	req, err := ParseHTTPRequestInEnv(`{"url":"https://api.example.com/items"}`, &tooling.Env{CWD: t.TempDir(), HTTPDefaultHeaders: defaults})
 	if err != nil {
 		t.Fatal(err)
@@ -864,16 +873,22 @@ func TestHTTPRequestDescribeKeepsAConfiguredCredentialOutOfThePrompt(t *testing.
 	text := req.Describe()
 	for _, want := range []string{
 		"Authorization: <redacted>",
+		"Authentication: <redacted>",
 		"X-Api-Key: <redacted>",
+		"X-Auth: <redacted>",
 		"User-Agent: " + browserUA,
-		"Headers from tools.http_request.default_headers: Authorization, User-Agent, X-Api-Key",
+		"Accept-Language: en-US",
+		`Sec-Ch-Ua-Platform: "Linux"`,
+		"Headers from tools.http_request.default_headers: Accept-Language, Authentication, Authorization, Sec-Ch-Ua-Platform, User-Agent, X-Api-Key, X-Auth",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("description does not show %q:\n%s", want, text)
 		}
 	}
-	if strings.Contains(text, "t0p-secret") || strings.Contains(text, "k3y") {
-		t.Errorf("the prompt shows a configured credential:\n%s", text)
+	for _, secret := range []string{"t0p-secret", "k3y", "s3ss", "0ther"} {
+		if strings.Contains(text, secret) {
+			t.Errorf("the prompt shows the configured credential %q:\n%s", secret, text)
+		}
 	}
 	if got := req.Header.Get("Authorization"); got != "Bearer t0p-secret" {
 		t.Errorf("the request sends Authorization %q, want the configured value", got)
@@ -886,5 +901,21 @@ func TestHTTPRequestDescribeKeepsAConfiguredCredentialOutOfThePrompt(t *testing.
 	}
 	if text := own.Describe(); !strings.Contains(text, "Authorization: Bearer abc") {
 		t.Errorf("the call's own credential is hidden:\n%s", text)
+	}
+}
+
+// The loader and the request builder keep one rule on which default headers no
+// request can carry, each in its own package: whatever the loader accepts the
+// tool sends, and whatever it refuses the tool refuses too.
+func TestDefaultHeaderRulesMatchTheLoader(t *testing.T) {
+	for _, name := range []string{
+		"User-Agent", "Accept", "Accept-Language", "Authorization", "Cookie", "X-Client", "Cache-Control",
+		"Host", "content-type", "Content-Length", "Transfer-Encoding", "Proxy-Authorization", "Connection", "Te",
+	} {
+		loaderErr := (&config.Tools{HTTPRequest: config.ToolHTTPRequest{DefaultHeaders: map[string]string{name: "v"}}}).Validate()
+		_, toolErr := ParseHTTPRequestInEnv(`{"url":"https://example.com"}`, &tooling.Env{HTTPDefaultHeaders: map[string]string{name: "v"}})
+		if (loaderErr == nil) != (toolErr == nil) {
+			t.Errorf("%s: the loader says %v, the tool says %v", name, loaderErr, toolErr)
+		}
 	}
 }

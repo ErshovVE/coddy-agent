@@ -85,13 +85,13 @@ tools:
 
 The tool builds the headers of a request in three layers, and a later layer wins:
 
-1. the tool's own defaults: the `coddy-agent` `User-Agent`, and the `Content-Type` of the payload;
+1. the tool's own defaults: the `coddy-agent` `User-Agent`, and the `Content-Type` of the payload, which `default_headers` cannot take (see below);
 2. `default_headers`;
 3. the call's `headers`.
 
 A header the call names replaces the configured one, however the call spells its name, and an empty value in the call removes it: `"User-Agent": ""` then sends no `User-Agent` at all. An empty value in `default_headers` leaves that header out of every call that does not set it, so `User-Agent: ""` stops the tool from introducing itself. Without the key the requests go out exactly as before.
 
-`Host`, `Content-Type`, `Content-Length` and `Transfer-Encoding` are refused: the tool derives them from each call - its address, its payload and the payload's framing - and a call that needs another value sets it in its own `headers`. `Proxy-Authorization` is refused too: an `https` request goes through a proxy as a tunnel and carries its headers inside it to the origin, so a proxy's credential set here would reach every destination; it belongs in the proxy address (`HTTPS_PROXY`, or a call's `proxy` as `http://user:password@host:3128`). A name that is not a valid header name, two spellings of one header and a value with a line break in it are refused as well; `coddy -t` reports each on the line of the header.
+`Host`, `Content-Type`, `Content-Length` and `Transfer-Encoding` are refused: the tool derives them from each call - its address, its payload and the payload's framing - and a call that needs another value sets it in its own `headers`. So are the hop-by-hop headers - `Connection`, `Keep-Alive`, `Proxy-Connection`, `TE`, `Trailer` and `Upgrade` - which describe one connection rather than the client; set for every request they break them (HTTP/2 refuses a request that carries `Upgrade`). `Proxy-Authorization` is refused too: an `https` request goes through a proxy as a tunnel and carries its headers inside it to the origin, so a proxy's credential set here would reach every destination; it belongs in the proxy address (`HTTPS_PROXY`, or a call's `proxy` as `http://user:password@host:3128`). A name has the shape of every header in use - letters, digits, `-` and `_`, starting with a letter - because it is also a segment of a config path, where a dot would split it and a number would read as a list position; a call can still send any other name in its own `headers`. Two spellings of one header and a value with a line break in it are refused as well. The loader refuses such a configuration at startup, and `coddy -t` names the header in its report.
 
 A configured header acts as if the call had written it: an `Accept-Encoding: gzip` here, for example, gets every body decoded for reading and saved to `output_file` as it arrived.
 
@@ -105,7 +105,7 @@ In the web UI the map is the **Default headers** block of **HTTP requests** on t
 
 ### What the prompt shows
 
-The permission prompt lists the configured headers among the ones that go out and names them on a line of their own, so the operator can tell them from the headers the model wrote:
+The permission prompt lists the configured headers among the ones that go out and names them on a line of their own, so the operator can tell them from the headers the model wrote; a header the configuration leaves out with an empty value is named there too, as `User-Agent (not sent)`:
 
 ```text
 GET https://match3.drobek.online/app.webmanifest
@@ -115,15 +115,15 @@ Headers:
 Headers from tools.http_request.default_headers: Accept, User-Agent
 ```
 
-The value of a configured header whose name marks a credential - one containing `authorization`, `cookie`, `token`, `secret`, `password` or `api-key`, the rule the web UI masks headers by - shows as `<redacted>`: the prompt also reaches a Telegram chat, a notification hook and whoever looks at the screen. A credential the model wrote into the call itself is shown as written, the way it stands in the transcript.
+The prompt shows the configured value of a header that says who the client is or what it accepts - `User-Agent`, the `Accept` family, `Cache-Control`, `Pragma`, `DNT`, `Referer`, `Origin`, `Upgrade-Insecure-Requests` and the `Sec-` client hints a browser adds. Any other configured header shows its name with `<redacted>` for the value: a credential can sit under any name (`X-Auth`, `X-Session`), and the prompt also reaches a Telegram chat, a notification hook and whoever looks at the screen. A header the model wrote into the call itself is shown as written, the way it stands in the transcript.
 
-The headers are part of the configuration, and a grant does not record them: an approved or allowlisted destination gets its requests with whatever `default_headers` holds at the time.
+The headers are part of the configuration, and a grant does not record them: an approved or allowlisted destination gets its requests with whatever `default_headers` holds at the time. A prompt that waits across a restart of `coddy serve` is answered for the request it showed: when `default_headers` has changed by the time the answer arrives, the call asks again with the request it would send now instead of running under the old answer.
 
 ### Credentials
 
 Every request of the tool carries these headers, to every destination the model reaches with it: the service you had in mind, a page a search turned up, an address a prompt injection asked for. An `Authorization`, a `Cookie` or an API key header set here goes to all of them, without a prompt under `bypass` or to an allowlisted destination. Keep credentials out of `default_headers` unless that is the intent, for example on a machine that talks to one service; otherwise let the call carry the credential, where the prompt shows it for the one destination it is meant for.
 
-`config_get` shows the model which default headers are configured and never their values, the way it treats the header values of an MCP server; the file and the Settings screen show them.
+`config_get` shows the model which default headers are configured and never their values, the way it treats the header values of an MCP server - an empty one excepted, which says the header is left out; the file and the Settings screen show them. A value the model stages back as it read it, `<redacted>`, is refused rather than written over the header.
 
 ## The answer
 

@@ -356,7 +356,8 @@ tools:
   # refuses no address (localhost included), so bypass reaches anything the host can.
   # default_headers go out with every request unless the call names the header itself
   # (a call's value wins, and an empty value leaves the header out); Host, Content-Type,
-  # Content-Length, Transfer-Encoding and Proxy-Authorization are refused. They reach every destination the
+  # Content-Length, Transfer-Encoding, the hop-by-hop headers (Connection, Upgrade, ...) and
+  # Proxy-Authorization are refused. They reach every destination the
   # model sends a request to, so keep credentials out unless that is the intent.
   # webfetch and the model providers never send them.
   # See docs/features/http-requests.md.

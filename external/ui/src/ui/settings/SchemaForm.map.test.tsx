@@ -128,15 +128,43 @@ test("Add opens an empty row that stays on screen and out of the document until 
   );
   fireEvent.click(mapField().getByRole("button", { name: "Add" }));
   expect(nameInputs()).toHaveLength(2);
-  expect(lastHeaders(changes)).toEqual({ Accept: "b" });
+  // The document is what it was, so the form is not edited yet: a copy of the
+  // configuration that arrives now may still replace it.
   fireEvent.change(valueInputs()[1]!, { target: { value: "coddy-lab" } });
   expect(nameInputs()).toHaveLength(2);
-  expect(lastHeaders(changes)).toEqual({ Accept: "b" });
+  expect(changes).toHaveLength(0);
   fireEvent.change(nameInputs()[1]!, { target: { value: " X-Client " } });
   expect(lastHeaders(changes)).toEqual({
     Accept: "b",
     "X-Client": "coddy-lab",
   });
+});
+
+test("a name the object prototype answers to is a key like any other", () => {
+  const changes: Record<string, unknown>[] = [];
+  render(<Harness initial={{}} changes={changes} />);
+  fireEvent.click(mapField().getByRole("button", { name: "Add" }));
+  fireEvent.change(nameInputs()[0]!, { target: { value: "__proto__" } });
+  fireEvent.change(valueInputs()[0]!, { target: { value: "x" } });
+  const headers = lastHeaders(changes) as Record<string, string>;
+  expect(Object.keys(headers)).toEqual(["__proto__"]);
+  expect(JSON.stringify(headers)).toBe('{"__proto__":"x"}');
+});
+
+test("a removed row takes its focus with it instead of handing it to the next row's trash", () => {
+  const changes: Record<string, unknown>[] = [];
+  render(
+    <Harness
+      initial={{ default_headers: { "User-Agent": "a", Accept: "b" } }}
+      changes={changes}
+    />,
+  );
+  const first = mapField().getAllByRole("button", { name: "Remove" })[0]!;
+  first.focus();
+  fireEvent.click(first);
+  expect(nameInputs().map((i) => i.value)).toEqual(["Accept"]);
+  const left = mapField().getByRole("button", { name: "Remove" });
+  expect(document.activeElement).not.toBe(left);
 });
 
 test("a name with an empty value is kept: it leaves that header out", () => {

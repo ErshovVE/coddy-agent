@@ -584,6 +584,23 @@ func TestReadConfigPathRedactsDefaultHeaderValues(t *testing.T) {
 	}
 }
 
+// An empty default header is no secret: config_get shows the model that the
+// header is left out rather than a placeholder a credential would get.
+func TestReadConfigPathShowsAnEmptyDefaultHeader(t *testing.T) {
+	paths := testPathConfig(t, "tools:\n  http_request:\n    default_headers:\n      User-Agent: \"\"\n      Authorization: Bearer t0p-secret\n")
+	got, err := ReadConfigPath(paths, "tools.http_request.default_headers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers, ok := got.Value.(map[string]interface{})
+	if !ok {
+		t.Fatalf("value = %#v", got.Value)
+	}
+	if headers["User-Agent"] != "" || headers["Authorization"] != redactedConfigValue {
+		t.Fatalf("config_get showed %v, want the empty User-Agent as it is and Authorization hidden", headers)
+	}
+}
+
 // A header is a key of a map, not a field of a struct: config_set addresses it
 // by its name, sets it, and deletes it again, and the staged command names the
 // header without its value.
@@ -618,5 +635,67 @@ func TestCommitUCICommandsSetsAndDeletesADefaultHeader(t *testing.T) {
 	}
 	if _, err := CommitUCICommands(paths, mustParseUCI(t, "set tools.http_request.default_headers.Host=api.internal")); err == nil {
 		t.Fatal("a Host default header was committed")
+	}
+}
+
+// A key of a map that reads as a number is still a key, not a list position:
+// config_get and a staged command hide its value like any other default
+// header's, and the positions of a list still drop out of the path.
+func TestConfigPathKeysKeepANumericKeyOfAMap(t *testing.T) {
+	paths := testPathConfig(t, "tools:\n  http_request:\n    default_headers:\n      \"123\": Bearer t0p-secret\n")
+	got, err := ReadConfigPath(paths, "tools.http_request.default_headers.123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(got.Value)
+	if !got.Redacted || strings.Contains(string(encoded), "t0p-secret") {
+		t.Fatalf("config_get showed the value of a numeric header: %s", encoded)
+	}
+	cmds := mustParseUCI(t, "set tools.http_request.default_headers.123=Bearer t0p-secret")
+	if shown := cmds[0].RedactedString(); strings.Contains(shown, "t0p-secret") {
+		t.Fatalf("the staged command reads %q", shown)
+	}
+	tokens, err := parseDottedConfigPath("mcp_servers.0.headers.1.value")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys := configPathKeys(tokens); strings.Join(keys, ".") != "mcp_servers.headers.value" {
+		t.Fatalf("keys of a path through lists = %v", keys)
+	}
+	// A name where a list wants a position stays in the path, so a secret it
+	// names is still judged one.
+	tokens, err = parseDottedConfigPath("providers.api_key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys := configPathKeys(tokens); !configSecretPath(keys) {
+		t.Fatalf("providers.api_key lost its secret shape: %v", keys)
+	}
+}
+
+// config_get shows <redacted> where a secret stands. Staging that word back is
+// no value: a commit that would write it over a secret - a header of
+// default_headers, a key - is refused and the secret stays.
+func TestCommitRefusesTheRedactedPlaceholderForASecret(t *testing.T) {
+	paths := testPathConfig(t, "tools:\n  http_request:\n    default_headers:\n      Authorization: Bearer t0p-secret\n")
+	for _, line := range []string{
+		"set tools.http_request.default_headers.Authorization=<redacted>",
+		`set tools.http_request.default_headers={"Authorization":"<redacted>","Accept":"application/json"}`,
+		"set tools.websearch.brave_api_key=<redacted>",
+	} {
+		_, err := CommitUCICommands(paths, mustParseUCI(t, line))
+		if err == nil || !strings.Contains(err.Error(), "<redacted>") {
+			t.Errorf("%s: error = %v, want a refusal naming the placeholder", line, err)
+		}
+	}
+	cfg, err := LoadWithPaths(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Tools.HTTPRequest.DefaultHeaders["Authorization"]; got != "Bearer t0p-secret" {
+		t.Fatalf("Authorization = %q after the refused commits", got)
+	}
+	if _, err := CommitUCICommands(paths, mustParseUCI(t, "set tools.http_request.default_headers.Accept=application/json")); err != nil {
+		t.Fatalf("an ordinary value was refused: %v", err)
 	}
 }

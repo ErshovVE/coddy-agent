@@ -667,3 +667,51 @@ tools:
 		t.Errorf("the save reordered the headers the form left in place:\n%s", got)
 	}
 }
+
+// The headers of a map the form was served can change on disk before the save:
+// another save or config_set adds one, or removes one. A save that did not touch
+// them leaves them as the file has them - the added one stays, the removed one
+// stays removed - and an edit the form did make still wins.
+func TestSettingsSaveKeepsHeadersSomebodyElseAddedOrRemoved(t *testing.T) {
+	raw := `# yaml-language-server: $schema=https://coddy.dev/config.schema.json
+tools:
+  http_request:
+    default_headers:
+      Accept: application/json
+      X-Old: gone-soon
+`
+	live, raw := settingsSaveFixture(t, raw)
+	onDisk := strings.Replace(raw, "      X-Old: gone-soon\n", "      X-Trace: abc-123\n", 1)
+	if err := os.WriteFile(live.Paths.ConfigPath, []byte(onDisk), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	headersOf := func(saved string) map[string]string {
+		t.Helper()
+		var doc struct {
+			Tools struct {
+				HTTPRequest struct {
+					DefaultHeaders map[string]string `yaml:"default_headers"`
+				} `yaml:"http_request"`
+			} `yaml:"tools"`
+		}
+		if err := yaml.Unmarshal([]byte(saved), &doc); err != nil {
+			t.Fatal(err)
+		}
+		return doc.Tools.HTTPRequest.DefaultHeaders
+	}
+
+	untouched := saveFromSettings(t, live, func(doc map[string]any) {
+		object(t, doc, "agent")["max_turns"] = 7
+	})
+	if got, want := headersOf(untouched), map[string]string{"Accept": "application/json", "X-Trace": "abc-123"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("a save that did not touch the headers wrote %v, want the file's %v:\n%s", got, want, untouched)
+	}
+
+	edited := saveFromSettings(t, live, func(doc map[string]any) {
+		headers := object(t, object(t, doc, "tools"), "http_request")["default_headers"].(map[string]any)
+		headers["X-Old"] = "edited"
+	})
+	if got, want := headersOf(edited), map[string]string{"Accept": "application/json", "X-Trace": "abc-123", "X-Old": "edited"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("a save that edited a header removed since wrote %v, want %v:\n%s", got, want, edited)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/EvilFreelancer/coddy-agent/internal/plans"
 	"github.com/EvilFreelancer/coddy-agent/internal/session"
 	"github.com/EvilFreelancer/coddy-agent/internal/tools"
+	toolweb "github.com/EvilFreelancer/coddy-agent/internal/tools/web"
 )
 
 // ResumeAfterPermission executes a tool call that was approved via POST /permission after the HTTP
@@ -68,23 +69,47 @@ func (a *Agent) ResumeAfterPermission(ctx context.Context, toolCallID string, pe
 		}
 		tc.InputJSON = shown
 	}
+	// An http_request prompt showed the request as the configuration built it
+	// then, the headers it adds to every request included. When the
+	// configuration has moved since, the answer was given for another request:
+	// the call goes through the gate again and asks with the one it would send.
+	askAgain := tc.Name == toolweb.ToolHTTPRequest && httpPromptMoved(sd, tc, toolEnv)
 	// A call the current mode refuses (a pending agent-mode write approved
 	// after switching to ask) must not leave an "allow always" grant behind:
 	// the grant would outlive the refusal and apply once the mode changes back.
 	_, refusedByMode := toolCallRefusedByMode(mode, tc.Name)
-	if st := sessionStatePtr(a.state); st != nil && !refusedByMode {
+	if st := sessionStatePtr(a.state); st != nil && !refusedByMode && !askAgain {
 		permission.RecordAllowAlways(st, tc.Name, tc.InputJSON, toolEnv.CWD, perm)
 	}
-	if !refusedByMode {
+	if !refusedByMode && !askAgain {
 		a.switchPermissionModeFromDialog(ctx, toolEnv, perm)
 	}
 	if sd != "" {
 		_ = session.ClearPendingPermission(sd)
 	}
 	callRules := a.toolCallRules(mode, tc, toolEnv.CWD)
-	result, execErr := a.executeToolCall(ctx, tc, toolEnv, mode, a.state.GetID(), true)
+	result, execErr := a.executeToolCall(ctx, tc, toolEnv, mode, a.state.GetID(), !askAgain)
 	a.state.AddMessage(toolResultMessage(tc, result, execErr, callRules))
 	return a.continueReAct(ctx, mode, toolEnv)
+}
+
+// httpPromptMoved reports whether the http_request prompt persisted for tc
+// reads otherwise than the prompt the call would get in env now. A record that
+// cannot be read, or belongs to another call, shows no difference: the
+// arguments in the bundle bind the answer as they always have.
+func httpPromptMoved(sessionDir string, tc llm.ToolCall, env *tools.Env) bool {
+	if strings.TrimSpace(sessionDir) == "" {
+		return false
+	}
+	rec, err := session.ReadPendingPermission(sessionDir)
+	if err != nil || rec == nil || strings.TrimSpace(rec.ToolCall.ToolCallID) != tc.ID {
+		return false
+	}
+	var shown strings.Builder
+	for _, item := range rec.ToolCall.Content {
+		shown.WriteString(item.Content.Text)
+	}
+	return shown.String() != permission.HTTPRequestPromptBody(env, tc.InputJSON)
 }
 
 func (a *Agent) findPendingToolCall(toolCallID string) (llm.ToolCall, error) {

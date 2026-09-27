@@ -17,7 +17,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -185,6 +184,9 @@ type HTTPRequest struct {
 	// configured names, sorted, the headers Header carries from the
 	// operator's default headers: the ones the call did not name itself.
 	configured []string
+	// notSent names, sorted, the headers the operator's default headers leave
+	// out with an empty value, where the call did not name them either.
+	notSent []string
 }
 
 // LocalFile is one workspace file a request uploads.
@@ -613,22 +615,39 @@ func (r *HTTPRequest) parseHeaders(raw map[string]json.RawMessage, defaults map[
 	return nil
 }
 
-// credentialHeaderName matches a header name that carries a credential: the
-// rule the web UI masks request and response headers by (SENSITIVE_HEADER in
-// external/ui/src/ui/chat/structuredToolDisplay.ts).
-var credentialHeaderName = regexp.MustCompile(`(?i)(authorization|cookie|token|secret|password|api[-_]?key)`)
+// describesTheClient reports whether a header, by its canonical name, says
+// who the client is or what it accepts - the headers a browser sends on its
+// own. The permission prompt shows the configured value of such a header; any
+// other configured header may carry a credential, and a name tells nothing
+// (X-Auth, X-Session, Authentication), so its value is hidden there.
+func describesTheClient(name string) bool {
+	switch name {
+	case "User-Agent", "Accept", "Accept-Language", "Accept-Encoding", "Accept-Charset",
+		"Cache-Control", "Pragma", "Dnt", "Referer", "Origin", "Upgrade-Insecure-Requests":
+		return true
+	}
+	// The client hints and fetch metadata a browser adds: Sec-Ch-Ua, Sec-Fetch-Mode.
+	return strings.HasPrefix(name, "Sec-")
+}
 
 // notForEveryRequest are the headers a default for every request cannot
 // stand for: the ones the tool takes from each call - the host of its address,
-// the type of its payload and the payload's framing - and a proxy's
-// credential, which an https request would carry to the origin through the
-// tunnel. The loader refuses them in tools.http_request.default_headers; this
-// is the same rule where the request is built.
+// the type of its payload and the payload's framing - the hop-by-hop ones,
+// which describe one connection, and a proxy's credential, which an https
+// request would carry to the origin through the tunnel. The loader refuses
+// them in tools.http_request.default_headers; this is the same rule where the
+// request is built.
 var notForEveryRequest = map[string]bool{
 	"Host":                true,
 	"Content-Type":        true,
 	"Content-Length":      true,
 	"Transfer-Encoding":   true,
+	"Connection":          true,
+	"Keep-Alive":          true,
+	"Proxy-Connection":    true,
+	"Te":                  true,
+	"Trailer":             true,
+	"Upgrade":             true,
 	"Proxy-Authorization": true,
 }
 
@@ -660,12 +679,14 @@ func (r *HTTPRequest) applyDefaultHeaders(defaults map[string]string, given map[
 		given[key] = true
 		if value == "" {
 			*removed = append(*removed, key)
+			r.notSent = append(r.notSent, key)
 			continue
 		}
 		r.Header.Set(key, value)
 		r.configured = append(r.configured, key)
 	}
 	sort.Strings(r.configured)
+	sort.Strings(r.notSent)
 	return nil
 }
 
@@ -770,11 +791,12 @@ func (r *HTTPRequest) Describe() string {
 			if name == "Content-Type" && r.body.kind == "form_data" && v == r.body.contentType {
 				v = "multipart/form-data; boundary=<generated>"
 			}
-			// A credential the operator configured for every request is known
-			// to the configuration alone; the prompt travels further - to a
-			// chat, a notification hook, a shared screen - so it names the
-			// header and hides the value.
-			if configured[name] && credentialHeaderName.MatchString(name) {
+			// A header the operator configured for every request may be a
+			// credential under any name, and it is known to the configuration
+			// alone; the prompt travels further - to a chat, a notification
+			// hook, a shared screen - so it names such a header and shows the
+			// value only of one that describes the client.
+			if configured[name] && !describesTheClient(name) {
 				v = "<redacted>"
 			}
 			lines = append(lines, name+": "+v)
@@ -789,10 +811,11 @@ func (r *HTTPRequest) Describe() string {
 			b.WriteString("  " + l + "\n")
 		}
 	}
-	if len(r.configured) > 0 {
+	if fromConfig := r.describeConfigured(); fromConfig != "" {
 		// The model never wrote these, and one of them may be a credential
-		// the operator set for every request: the prompt says where they came from.
-		b.WriteString("Headers from tools.http_request.default_headers: " + strings.Join(r.configured, ", ") + "\n")
+		// the operator set for every request: the prompt says where they came
+		// from, and which ones the configuration leaves out.
+		b.WriteString("Headers from tools.http_request.default_headers: " + fromConfig + "\n")
 	}
 	r.describeBody(&b)
 	switch {
@@ -811,6 +834,19 @@ func (r *HTTPRequest) Describe() string {
 		b.WriteString("Saves the response body to " + r.OutputFile + "\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// describeConfigured lists, by name, what the operator's default headers did
+// to this request: the headers they added, and the ones they left out, marked
+// so. Empty when they did nothing to it.
+func (r *HTTPRequest) describeConfigured() string {
+	names := make([]string, 0, len(r.configured)+len(r.notSent))
+	names = append(names, r.configured...)
+	for _, name := range r.notSent {
+		names = append(names, name+" (not sent)")
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 func (r *HTTPRequest) describeBody(b *strings.Builder) {

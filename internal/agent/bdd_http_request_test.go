@@ -29,6 +29,7 @@ import (
 	"github.com/EvilFreelancer/coddy-agent/internal/acp"
 	"github.com/EvilFreelancer/coddy-agent/internal/config"
 	"github.com/EvilFreelancer/coddy-agent/internal/llm"
+	"github.com/EvilFreelancer/coddy-agent/internal/permission"
 	"github.com/EvilFreelancer/coddy-agent/internal/session"
 	"github.com/EvilFreelancer/coddy-agent/internal/tgfake/llmstub"
 	"github.com/EvilFreelancer/coddy-agent/internal/tools"
@@ -566,10 +567,12 @@ func TestHTTPRequestDefaultHeadersStayOffTheModelProvider(t *testing.T) {
 	}
 }
 
-// TestHTTPRequestEnvCopiesTheSection pins what every tool environment takes
-// from tools.http_request - at the start of a turn, after a config_commit, and
-// for a call resumed after its permission prompt - and that it takes copies: a
-// reload builds a new config rather than editing the one a call is reading.
+// TestHTTPRequestEnvCopiesTheSection pins what httpRequestEnv takes from
+// tools.http_request - the helper the start of a turn, the refresh after a
+// config_commit and the environment of a resumed call all go through - and
+// that it takes copies: a reload builds a new config rather than editing the
+// one a call is reading. The resumed call's environment is checked through
+// buildToolEnv itself.
 func TestHTTPRequestEnvCopiesTheSection(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Tools.HTTPRequest = config.ToolHTTPRequest{
@@ -594,5 +597,92 @@ func TestHTTPRequestEnvCopiesTheSection(t *testing.T) {
 	resumed := NewAgent(cfg, st, &bddHTTPPermissionSender{answer: "allow"}, nil).buildToolEnv(string(session.ModeAgent), "")
 	if resumed.HTTPDefaultHeaders["User-Agent"] != "changed" {
 		t.Errorf("a resumed call's environment carries default headers %v", resumed.HTTPDefaultHeaders)
+	}
+}
+
+// A prompt can wait across a restart, and the configuration can move while it
+// waits. The answer was given for the request the prompt showed: when the
+// headers the configuration adds have changed since, the resumed call asks
+// again with the request it would send now; when nothing changed it just runs.
+func TestResumedHTTPRequestAsksAgainWhenTheDefaultHeadersMoved(t *testing.T) {
+	for _, moved := range []bool{false, true} {
+		var mu sync.Mutex
+		var agents []string
+		service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			agents = append(agents, r.UserAgent())
+			mu.Unlock()
+			_, _ = io.WriteString(w, "ok")
+		}))
+		sd := t.TempDir()
+		const callID = "call_http_resume"
+		args := `{"url":"` + service.URL + `/items"}`
+		cfg := &config.Config{
+			Providers: []config.ProviderConfig{{Name: "fake", Type: "openai", APIKey: "test"}},
+			Models:    []config.ModelEntry{{Model: "fake/model", MaxTokens: 100}},
+			Agent:     config.Agent{Model: "fake/model"},
+		}
+		cfg.Tools.PermissionMode = config.PermModeAsk
+		cfg.Tools.HTTPRequest.DefaultHeaders = map[string]string{"User-Agent": "shown/1"}
+		st := &session.State{
+			ID: "sess_resume_http", CWD: t.TempDir(), Mode: session.ModeAgent, SessionDir: sd,
+			Messages: []llm.Message{
+				{Role: llm.RoleUser, Content: "fetch the items"},
+				{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: callID, Name: "http_request", InputJSON: args}}},
+			},
+		}
+		// The prompt as the turn showed it, persisted with the arguments it showed.
+		shownEnv := &tools.Env{CWD: st.CWD}
+		httpRequestEnv(shownEnv, cfg)
+		shown := permission.HTTPRequestPromptBody(shownEnv, args)
+		if err := session.WriteToolCallArgs(sd, callID, args); err != nil {
+			t.Fatal(err)
+		}
+		if err := session.WritePendingPermission(sd, acp.PermissionRequestParams{
+			SessionID: st.ID,
+			ToolCall: acp.PermissionToolCall{
+				ToolCallID: callID,
+				Content:    []acp.ToolCallResultItem{{Type: "content", Content: acp.ContentBlock{Type: "text", Text: shown}}},
+			},
+		}, "http_request", args); err != nil {
+			t.Fatal(err)
+		}
+		if moved {
+			cfg.Tools.HTTPRequest.DefaultHeaders = map[string]string{"User-Agent": "moved/2", "X-Client": "coddy-lab"}
+		}
+
+		sender := &bddHTTPPermissionSender{answer: "allow"}
+		ag := NewAgent(cfg, st, sender, nil)
+		ag.providerFactory = func(llm.ProviderInput) (llm.Provider, error) { return &resumePermissionProvider{t: t}, nil }
+		if _, err := ag.ResumeAfterPermission(context.Background(), callID, &acp.PermissionResult{Outcome: "selected", OptionID: "allow"}); err != nil {
+			t.Fatal(err)
+		}
+		service.Close()
+
+		mu.Lock()
+		sent := append([]string(nil), agents...)
+		mu.Unlock()
+		if !moved {
+			if len(sender.requests) != 0 {
+				t.Errorf("an unchanged request asked again: %d prompts", len(sender.requests))
+			}
+			if len(sent) != 1 || sent[0] != "shown/1" {
+				t.Errorf("the service received User-Agents %q, want the one the prompt showed", sent)
+			}
+			continue
+		}
+		if len(sender.requests) != 1 {
+			t.Fatalf("the moved request was asked %d times, want once more", len(sender.requests))
+		}
+		var text strings.Builder
+		for _, item := range sender.requests[0].ToolCall.Content {
+			text.WriteString(item.Content.Text)
+		}
+		if !strings.Contains(text.String(), "User-Agent: moved/2") || !strings.Contains(text.String(), "X-Client") {
+			t.Errorf("the new prompt does not show the request as it goes out now:\n%s", text.String())
+		}
+		if len(sent) != 1 || sent[0] != "moved/2" {
+			t.Errorf("the service received User-Agents %q, want the one the new prompt showed", sent)
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/textproto"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,16 +59,36 @@ var httpHeadersOfOneRequest = map[string]bool{
 	"Transfer-Encoding": true,
 }
 
+// httpHeadersOfOneConnection are the hop-by-hop headers: they describe the
+// connection a request travels on, not the client, and one set for every
+// request can break them all - HTTP/2 refuses a request carrying Upgrade.
+var httpHeadersOfOneConnection = map[string]bool{
+	"Connection":       true,
+	"Keep-Alive":       true,
+	"Proxy-Connection": true,
+	"Te":               true,
+	"Trailer":          true,
+	"Upgrade":          true,
+}
+
 // httpProxyCredentialHeader is refused as a default header for another reason:
 // through a proxy an https request tunnels, and a header the request carries
 // reaches the origin inside the tunnel, so a proxy's credential set here would
 // go to every destination rather than to the proxy.
 const httpProxyCredentialHeader = "Proxy-Authorization"
 
-// validateHTTPDefaultHeaders refuses a name that is not an HTTP header name,
-// two spellings of one header, a header the tool derives from each request and
-// a value that would break the header line. The map is left as written: the
-// tool trims names and values when it sends them.
+// httpDefaultHeaderName is the shape of a name default_headers takes: letters,
+// digits, "-" and "_", starting with a letter - the shape of every header in
+// use. HTTP allows more (dots, digits first), and a call may send such a name in
+// its own headers, but a key of this map is also a segment of a config path
+// (config_set, coddy -t), where a dot splits it and a number reads as a list
+// position.
+var httpDefaultHeaderName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
+
+// validateHTTPDefaultHeaders refuses a name that is not a header name of that
+// shape, two spellings of one header, a header the tool derives from each
+// request and a value that would break the header line. The map is left as
+// written: the tool trims names and values when it sends them.
 func validateHTTPDefaultHeaders(headers map[string]string) error {
 	names := make([]string, 0, len(headers))
 	for name := range headers {
@@ -77,8 +98,8 @@ func validateHTTPDefaultHeaders(headers map[string]string) error {
 	seen := make(map[string]string, len(names))
 	for _, raw := range names {
 		name := strings.TrimSpace(raw)
-		if !httpguts.ValidHeaderFieldName(name) {
-			return fmt.Errorf("tools.http_request.default_headers: %q is not a valid header name", raw)
+		if !httpDefaultHeaderName.MatchString(name) {
+			return fmt.Errorf("tools.http_request.default_headers: %q is not a header name this map takes: letters, digits, - and _, starting with a letter (a call can still send any other name in its own headers)", raw)
 		}
 		key := textproto.CanonicalMIMEHeaderKey(name)
 		if first, dup := seen[key]; dup {
@@ -87,6 +108,9 @@ func validateHTTPDefaultHeaders(headers map[string]string) error {
 		seen[key] = raw
 		if httpHeadersOfOneRequest[key] {
 			return fmt.Errorf("tools.http_request.default_headers.%s: %s describes a single request - http_request derives it from each call, and a call that needs another value sets it in its own headers", name, key)
+		}
+		if httpHeadersOfOneConnection[key] {
+			return fmt.Errorf("tools.http_request.default_headers.%s: %s belongs to one connection, not to every request (HTTP/2 refuses a request that carries Upgrade, for one); a call that needs it sets it in its own headers", name, key)
 		}
 		if key == httpProxyCredentialHeader {
 			return fmt.Errorf("tools.http_request.default_headers.%s: an https request carries its headers to the origin through the proxy's tunnel, so this would reach every destination; put the credential into the proxy address instead (HTTPS_PROXY, or a call's proxy as http://user:password@host:port)", name)

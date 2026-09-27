@@ -269,6 +269,9 @@ func applyUCICommand(root *yaml.Node, cmd UCICommand) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", cmd.RedactedString(), err)
 		}
+		if err := refuseRedactedPlaceholder(replacement, configPathKeys(tokens)); err != nil {
+			return fmt.Errorf("%s: %w", cmd.RedactedString(), err)
+		}
 		if _, err := mutateConfigNode(root, tokens, replacement, false); err != nil {
 			return fmt.Errorf("%s: %w", cmd.RedactedString(), err)
 		}
@@ -293,6 +296,9 @@ func applyUCICommand(root *yaml.Node, cmd UCICommand) error {
 		}
 		replacement, err := decodeUCIValue(cmd.Value, target)
 		if err != nil {
+			return fmt.Errorf("%s: %w", cmd.RedactedString(), err)
+		}
+		if err := refuseRedactedPlaceholder(replacement, configPathKeys(appendTokens)); err != nil {
 			return fmt.Errorf("%s: %w", cmd.RedactedString(), err)
 		}
 		if _, err := mutateConfigNode(root, appendTokens, replacement, false); err != nil {
@@ -327,6 +333,32 @@ func applyUCICommand(root *yaml.Node, cmd UCICommand) error {
 	default:
 		return fmt.Errorf("config command verb %q is not supported", cmd.Op)
 	}
+}
+
+// refuseRedactedPlaceholder refuses a value that would write, over a secret,
+// the word config_get shows in its place: a model that reads a section and
+// stages it back would replace every secret in it - a key, a header of
+// tools.http_request.default_headers - with that word.
+func refuseRedactedPlaceholder(node *yaml.Node, path []string) error {
+	switch node.Kind {
+	case yaml.DocumentNode, yaml.SequenceNode:
+		for _, child := range node.Content {
+			if err := refuseRedactedPlaceholder(child, path); err != nil {
+				return err
+			}
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if err := refuseRedactedPlaceholder(node.Content[i+1], appendPath(path, node.Content[i].Value)); err != nil {
+				return err
+			}
+		}
+	case yaml.ScalarNode:
+		if node.Value == redactedConfigValue && configSecretPath(path) {
+			return fmt.Errorf("%s is what config_get shows in place of a secret, not its value: stage the real value, or leave the key out of the command", redactedConfigValue)
+		}
+	}
+	return nil
 }
 
 // decodeUCIValue turns raw command text into a YAML node for the target field.

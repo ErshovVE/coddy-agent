@@ -1,5 +1,5 @@
 import type { ChangeEvent, ReactNode } from "react";
-import { Fragment, useId, useState } from "react";
+import { Fragment, useId, useRef, useState } from "react";
 
 import { Chevron } from "../components/Chevron";
 
@@ -523,38 +523,44 @@ function ArrayItemControl(props: {
   );
 }
 
-/** One row of a map being edited: the name as typed, and its value. */
-type MapRow = { name: string; value: string };
+/** One row of a map being edited: the name as typed, its value, and a key of
+ * its own, so a removed row takes its focus with it instead of handing the next
+ * row's trash to a second key press. */
+type MapRow = { id: number; name: string; value: string };
 
-function mapRowsOf(value: unknown): MapRow[] {
+function mapRowsOf(value: unknown, nextId: () => number): MapRow[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return [];
   }
   return Object.entries(value as Record<string, unknown>).map(([name, v]) => ({
+    id: nextId(),
     name,
     value: v === undefined || v === null ? "" : String(v),
   }));
 }
 
 /** The document the rows stand for: a row without a name is left out, and of
- * two rows with one name the later one wins, as a later key does in YAML. */
-function mapOfRows(rows: MapRow[]): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const row of rows) {
-    const name = row.name.trim();
-    if (name !== "") {
-      out[name] = row.value;
-    }
-  }
-  return out;
+ * two rows with one name the later one wins, as a later key does in YAML.
+ * Object.fromEntries defines own keys, so a name such as __proto__ is a key
+ * like any other rather than the object's prototype. */
+function mapOfRows(
+  rows: ReadonlyArray<Pick<MapRow, "name" | "value">>,
+): Record<string, string> {
+  return Object.fromEntries(
+    rows.flatMap((row): Array<[string, string]> => {
+      const name = row.name.trim();
+      return name === "" ? [] : [[name, row.value]];
+    }),
+  );
 }
 
 function sameMap(a: Record<string, string>, b: unknown): boolean {
-  const other = mapOfRows(mapRowsOf(b));
+  const other = mapOfRows(mapRowsOf(b, () => 0));
   const keys = Object.keys(a);
+  const otherKeys = Object.keys(other);
   return (
-    keys.length === Object.keys(other).length &&
-    keys.every((k, i) => Object.keys(other)[i] === k && other[k] === a[k])
+    keys.length === otherKeys.length &&
+    keys.every((k, i) => otherKeys[i] === k && other[k] === a[k])
   );
 }
 
@@ -563,8 +569,10 @@ function sameMap(a: Record<string, string>, b: unknown): boolean {
  * bare inputs, the name and then the value, each beside its trash, with Add
  * under the rows. The rows are the form's own: a row whose name is still empty
  * stays on screen and out of the document, and so does the earlier of two rows
- * with one name. A document that stops matching the rows came from outside the
- * form - a reload, a save elsewhere - and replaces them.
+ * with one name. A change that leaves the document as it was (Add, a value typed
+ * into a row with no name yet) is no edit of the form. A document that stops
+ * matching the rows came from outside the form - a reload, a save elsewhere -
+ * and replaces them.
  */
 function StringMapField(props: {
   label: string;
@@ -574,28 +582,33 @@ function StringMapField(props: {
 }) {
   const { label, description, value, onChange } = props;
   const { t: tr } = useT();
-  const [rows, setRows] = useState<MapRow[]>(() => mapRowsOf(value));
+  const lastId = useRef(0);
+  const nextId = () => ++lastId.current;
+  const [rows, setRows] = useState<MapRow[]>(() => mapRowsOf(value, nextId));
   const [shown, setShown] = useState<unknown>(value);
   if (value !== shown) {
     // Taken while rendering, like the settings copy itself: an effect would
     // draw one frame of the stale rows first.
     setShown(value);
     if (!sameMap(mapOfRows(rows), value)) {
-      setRows(mapRowsOf(value));
+      setRows(mapRowsOf(value, nextId));
     }
   }
   const update = (next: MapRow[]) => {
     setRows(next);
-    onChange(mapOfRows(next));
+    const doc = mapOfRows(next);
+    if (!sameMap(doc, value)) {
+      onChange(doc);
+    }
   };
-  const edit = (i: number, patch: Partial<MapRow>) =>
-    update(rows.map((row, j) => (j === i ? { ...row, ...patch } : row)));
+  const edit = (id: number, patch: Partial<MapRow>) =>
+    update(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   return (
     <fieldset className="settings-fieldset">
       <LegendWithHint label={label} description={description} />
       <ul className="settings-array settings-map">
         {rows.map((row, i) => (
-          <li key={i} className="settings-array-row">
+          <li key={row.id} className="settings-array-row">
             <div className="settings-array-row-field settings-map-entry">
               <input
                 className="settings-input settings-map-name"
@@ -606,7 +619,7 @@ function StringMapField(props: {
                 spellCheck={false}
                 autoComplete="off"
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  edit(i, { name: e.target.value })
+                  edit(row.id, { name: e.target.value })
                 }
               />
               <input
@@ -618,7 +631,7 @@ function StringMapField(props: {
                 spellCheck={false}
                 autoComplete="off"
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  edit(i, { value: e.target.value })
+                  edit(row.id, { value: e.target.value })
                 }
               />
             </div>
@@ -627,7 +640,7 @@ function StringMapField(props: {
               className="settings-btn settings-btn-icon settings-btn-danger settings-array-remove"
               aria-label={tr("settings.array.removeAria")}
               title={tr("settings.array.removeTitle")}
-              onClick={() => update(rows.filter((_, j) => j !== i))}
+              onClick={() => update(rows.filter((r) => r.id !== row.id))}
             >
               <IconTrash />
             </button>
@@ -637,7 +650,7 @@ function StringMapField(props: {
       <button
         type="button"
         className="settings-btn"
-        onClick={() => update([...rows, { name: "", value: "" }])}
+        onClick={() => update([...rows, { id: nextId(), name: "", value: "" }])}
       >
         {tr("settings.array.add")}
       </button>

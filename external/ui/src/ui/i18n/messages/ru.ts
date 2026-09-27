@@ -139,8 +139,8 @@ export const messagesRu: Record<string, string> = {
     "Здесь пока пусто. Используйте «Добавить», чтобы создать.",
   "settings.map.namePlaceholder": "Имя",
   "settings.map.valuePlaceholder": "Значение",
-  "settings.map.nameAria": "{label} {n}: имя",
-  "settings.map.valueAria": "{label} {n}: значение",
+  "settings.map.nameAria": "{label} {n}, имя",
+  "settings.map.valueAria": "{label} {n}, значение",
 
   "settings.field.apiBaseFallback": "Базовый URL API",
   "settings.field.modelIdFallback": "Идентификатор модели",
@@ -386,7 +386,7 @@ export const messagesRu: Record<string, string> = {
   "settings.schema.tools.http_request.default_headers.label":
     "Заголовки по умолчанию",
   "settings.schema.tools.http_request.default_headers.desc":
-    "Заголовки, которые уходят с каждым запросом, если вызов не задал их сам. Например, браузерный User-Agent для сайта, который не отдаёт файлы инструментам. Заголовки вызова важнее, пустое значение убирает заголовок. Они уходят на любой адрес, поэтому учётные данные здесь уместны только намеренно. Host, Content-Type, Content-Length, Transfer-Encoding и Proxy-Authorization не принимаются, а webfetch и провайдеры моделей эти заголовки не отправляют.",
+    "Заголовки, которые уходят с каждым запросом, если вызов не задал их сам. Например, браузерный User-Agent для сайта, который не отдаёт файлы инструментам. Заголовки вызова важнее, пустое значение убирает заголовок. Они уходят на любой адрес, поэтому учётные данные здесь уместны только намеренно. Host, Content-Type, Content-Length, Transfer-Encoding, hop-by-hop заголовки и Proxy-Authorization не принимаются, а webfetch и провайдеры моделей эти заголовки не отправляют.",
 
   "settings.schema.subagents.desc":
     "Пользовательские дочерние агенты, которым модель может делегировать работу через spawn_agent. Определения хранятся в markdown-файлах с YAML-фронтматтером; каждый запуск выполняется как фоновая задача родительской сессии со своей дочерней сессией и транскриптом.",
