@@ -5,6 +5,7 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"image"
 	"image/color"
 	"image/png"
@@ -13,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/acp"
@@ -228,6 +230,40 @@ func TestLlmMsgsToCoddyOpenAIForSessionIncludesFullSizeAssetURL(t *testing.T) {
 	}
 	if got, ok := files[1]["url"]; ok {
 		t.Fatalf("an asset that is no longer on disk must carry no url, got %#v", got)
+	}
+}
+
+// A picture a read showed the model stays on that call's result, and the
+// transcript names it there the way it names a prompt attachment, so the web
+// UI previews it on the read row after a reload. The bytes themselves never
+// travel in the transcript.
+func TestLlmMsgsToCoddyOpenAIForSessionNamesThePicturesOfAToolResult(t *testing.T) {
+	dir := t.TempDir()
+	saved := filepath.Join(dir, "shot-1a2b.png")
+	if err := os.WriteFile(saved, pngBytes(t), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	out := llmMsgsToCoddyOpenAIForSession("sess_files", dir, []llm.Message{{
+		Role:       llm.RoleTool,
+		ToolCallID: "r1",
+		Content:    "shot.png: PNG image, 4x3",
+		ImageParts: []llm.ImagePart{{DataURL: "data:image/png;base64,abc", Name: "shot.png", FilePath: saved, ThumbnailPath: saved + ".png"}},
+	}})
+	files, ok := out[0]["files"].([]map[string]interface{})
+	if !ok || len(files) != 1 {
+		t.Fatalf("files: %#v", out[0]["files"])
+	}
+	if files[0]["name"] != "shot.png" || files[0]["mime_type"] != "image/png" {
+		t.Errorf("file = %#v, want shot.png as image/png", files[0])
+	}
+	if got := files[0]["url"]; got != "/coddy/sessions/sess_files/assets/shot-1a2b.png" {
+		t.Errorf("url = %#v", got)
+	}
+	if got := files[0]["preview_url"]; got != "/coddy/sessions/sess_files/assets/shot-1a2b.png/thumbnail" {
+		t.Errorf("preview_url = %#v", got)
+	}
+	if raw, _ := json.Marshal(out); strings.Contains(string(raw), "base64,abc") {
+		t.Errorf("the transcript carries the picture's bytes: %s", raw)
 	}
 }
 

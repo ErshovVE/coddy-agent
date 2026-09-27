@@ -1132,7 +1132,9 @@ func llmMsgsToCoddyOpenAIForSession(sessionID, assetsDir string, msgs []llm.Mess
 			// Nobody typed this message: a woken turn opened with it.
 			item["background_wake"] = m.BackgroundWake
 		}
-		if m.Role == llm.RoleUser && len(m.ImageParts) > 0 {
+		// A prompt's attachments, and the pictures a tool call showed the
+		// model (read on an image file), which stay on that call's result.
+		if (m.Role == llm.RoleUser || m.Role == llm.RoleTool) && len(m.ImageParts) > 0 {
 			files := make([]map[string]interface{}, 0, len(m.ImageParts))
 			for _, part := range m.ImageParts {
 				name := strings.TrimSpace(part.Name)
@@ -1144,9 +1146,7 @@ func llmMsgsToCoddyOpenAIForSession(sessionID, assetsDir string, msgs []llm.Mess
 					"mime_type": imagePartMIMEType(part),
 				}
 				if sessionID != "" && part.FilePath != "" && part.ThumbnailPath != "" {
-					assetName := filepath.Base(part.FilePath)
-					file["preview_url"] = "/coddy/sessions/" + url.PathEscape(sessionID) +
-						"/assets/" + url.PathEscape(assetName) + "/thumbnail"
+					file["preview_url"] = session.AssetThumbnailRoute(sessionID, filepath.Base(part.FilePath))
 				}
 				// The full-size original, for a preview card to open enlarged.
 				// The address is a name under this session's assets directory,
@@ -1154,8 +1154,7 @@ func llmMsgsToCoddyOpenAIForSession(sessionID, assetsDir string, msgs []llm.Mess
 				// either 404 or, worse, name a different file that happens to
 				// share it.
 				if sessionID != "" && assetsDir != "" && isAssetOf(assetsDir, part.FilePath) {
-					file["url"] = "/coddy/sessions/" + url.PathEscape(sessionID) +
-						"/assets/" + url.PathEscape(filepath.Base(part.FilePath))
+					file["url"] = session.AssetRoute(sessionID, filepath.Base(part.FilePath))
 				}
 				files = append(files, file)
 			}
