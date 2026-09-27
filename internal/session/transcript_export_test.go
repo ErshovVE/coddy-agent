@@ -809,3 +809,31 @@ func TestExportNamesThePicturesAToolCallShowedTheModel(t *testing.T) {
 		}
 	}
 }
+
+// A session directory that moved keeps the paths its messages recorded where
+// it was before; the export names the copies where they are now, in the
+// assets of the directory it reads, for a prompt's attachments and a read's
+// pictures alike. A path outside any assets directory is left as recorded.
+func TestExportNamesTheCopiesWhereTheSessionDirectoryIsNow(t *testing.T) {
+	old := filepath.Join(string(filepath.Separator), "old", "sessions", "s", "assets")
+	now := filepath.Join(t.TempDir(), "s")
+	elsewhere := filepath.Join(string(filepath.Separator), "work", "diagram.png")
+	msgs := []llm.Message{
+		{Role: llm.RoleUser, Content: "look", ImageParts: []llm.ImagePart{
+			{Name: "photo.png", FilePath: filepath.Join(old, "photo.png")},
+			{Name: "diagram.png", FilePath: elsewhere},
+		}},
+		{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read", InputJSON: `{"path":"shot.png"}`}}},
+		{Role: llm.RoleTool, ToolCallID: "r1", Content: "shot.png: PNG image", ImageParts: []llm.ImagePart{
+			{Name: "shot.png", MIMEType: "image/png", FilePath: filepath.Join(old, "shot-1a2b3c4d5e6f7a8b.png")},
+		}},
+	}
+	doc := BuildExportDocument(ExportInput{SessionID: "s", SessionDir: now, Messages: msgs})
+	atts := doc.Entries[0].Attachments
+	if len(atts) != 2 || atts[0].Path != filepath.Join(AssetsPath(now), "photo.png") || atts[1].Path != elsewhere {
+		t.Errorf("attachments = %+v, want photo.png under %s and diagram.png as recorded", atts, AssetsPath(now))
+	}
+	if pics := doc.Entries[1].ToolCalls[0].Pictures; len(pics) != 1 || pics[0].Path != filepath.Join(AssetsPath(now), "shot-1a2b3c4d5e6f7a8b.png") {
+		t.Errorf("pictures = %+v, want the copy under %s", pics, AssetsPath(now))
+	}
+}
