@@ -851,6 +851,14 @@ func (f *FileStore) Save(state *State) error {
 	msgMu.Lock()
 	defer msgMu.Unlock()
 
+	// A state another one took over (a resumed child replacing the copy a
+	// surface loaded) owns nothing on disk any more. Checked under the lock
+	// every save of the bundle takes, so a save that got here after the new
+	// owner's save cannot write the older history back over it.
+	if state.superseded.Load() {
+		return nil
+	}
+
 	msgs, msgRev, msgEditRev, stateID := state.MessagesForPersist()
 	title := conversationTitle(state, msgs)
 
@@ -1048,7 +1056,7 @@ func (f *FileStore) Save(state *State) error {
 // PatchSessionMetaActivitySync writes only activitySeq and readActivitySeq into session.json,
 // preserving updatedAt and all other meta fields. It does not write messages.json.
 func (f *FileStore) PatchSessionMetaActivitySync(st *State) error {
-	if f == nil || st == nil {
+	if f == nil || st == nil || st.superseded.Load() {
 		return nil
 	}
 	dir := strings.TrimSpace(st.SessionDir)
@@ -1062,6 +1070,11 @@ func (f *FileStore) PatchSessionMetaActivitySync(st *State) error {
 	mu := f.pathMutex(path)
 	mu.Lock()
 	defer mu.Unlock()
+	// Again under the lock: a state superseded while it waited here must not
+	// put its older activity counters over the new owner's.
+	if st.superseded.Load() {
+		return nil
+	}
 
 	b, err := os.ReadFile(path)
 	if err != nil {

@@ -11,6 +11,12 @@ func (m *Manager) SetSubagentPublishHookForTest(fn func(*State)) {
 	m.testHooks.afterSubagentPublish = fn
 }
 
+// SetSubagentPrePublishHookForTest runs fn once a child state is built (a
+// resumed child's bundle read) and before it is published to the live map.
+func (m *Manager) SetSubagentPrePublishHookForTest(fn func(*State)) {
+	m.testHooks.beforeSubagentPublish = fn
+}
+
 // SetTurnEntryHookForTest runs fn at the start of turn admission, after the
 // caller resolved its state and before anything is registered.
 func (m *Manager) SetTurnEntryHookForTest(fn func(sessionID string)) {

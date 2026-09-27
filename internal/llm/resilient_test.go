@@ -288,6 +288,23 @@ func TestTransientTransportErrorClassification(t *testing.T) {
 		{"unexpected EOF", fmt.Errorf("openai stream: %w", io.ErrUnexpectedEOF), true},
 		{"connection reset", fmt.Errorf("openai stream: %w",
 			&net.OpError{Op: "read", Err: os.NewSyscallError("read", syscall.ECONNRESET)}), true},
+		{"connection aborted", fmt.Errorf("openai stream: %w",
+			&net.OpError{Op: "read", Err: os.NewSyscallError("read", syscall.ECONNABORTED)}), true},
+		// Windows reports a dead connection with Winsock's own codes, which
+		// neither match syscall.ECONNRESET nor say "connection reset" (issue
+		// #389): WSAECONNRESET when the remote host closed it, WSAECONNABORTED
+		// when the local stack gave up on it.
+		{"Windows connection reset", fmt.Errorf("openai stream: %w", windowsSocketError(10054)), true},
+		{"Windows connection aborted", fmt.Errorf("openai stream: %w", windowsSocketError(10053)), true},
+		{"Windows connection reset flattened to its text", errors.New(
+			"openai stream: read tcp 127.0.0.1:53107->127.0.0.1:62557: wsarecv: An existing connection was forcibly closed by the remote host."), true},
+		{"Windows connection aborted flattened to its text", errors.New(
+			"openai stream: write tcp 127.0.0.1:53107->127.0.0.1:62557: wsasend: An established connection was aborted by the software in your host machine."), true},
+		{"another Winsock failure", fmt.Errorf("openai stream: %w", windowsSocketError(10013)), false},
+		// Once text reached the caller the wrapper must not replay the call;
+		// the agent loop recovers it instead (IsTransientProviderError).
+		{"Windows connection reset after text", fmt.Errorf("openai stream: %w",
+			&streamTransportError{cause: windowsSocketError(10054), emitted: true}), false},
 		// What net/http actually prints for an RST_STREAM from the peer: no
 		// "http2:" prefix (that spelling belongs to GOAWAY and the lost-ping
 		// close), and wrapped in the url.Error of the request it killed.
@@ -320,6 +337,21 @@ func TestTransientTransportErrorClassification(t *testing.T) {
 				t.Fatalf("retryable = %v, want %v for %v", got, tc.want, tc.err)
 			}
 		})
+	}
+}
+
+// windowsSocketError is a read on an established TCP stream failing the way
+// Go's net package reports it on Windows: the Winsock code as a bare
+// syscall.Errno inside the wsarecv syscall error. Only the windows build of
+// syscall names these codes (WSAECONNRESET is 10054), so the value is what
+// the test can build everywhere.
+func windowsSocketError(code int) error {
+	return &net.OpError{
+		Op:     "read",
+		Net:    "tcp",
+		Source: &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 53107},
+		Addr:   &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 62557},
+		Err:    os.NewSyscallError("wsarecv", syscall.Errno(code)),
 	}
 }
 
@@ -774,6 +806,8 @@ func TestIsTransientProviderError(t *testing.T) {
 		{"server error before text", fmt.Errorf("openai stream: %w", &streamServerError{code: 502}), true},
 		{"truncated after text", fmt.Errorf("openai stream: %w", &streamTruncatedError{emitted: true}), true},
 		{"connection reset after text", fmt.Errorf("openai stream: %w", &streamTransportError{cause: syscall.ECONNRESET, emitted: true}), true},
+		{"Windows connection reset after text", fmt.Errorf("openai stream: %w", &streamTransportError{cause: windowsSocketError(10054), emitted: true}), true},
+		{"Windows connection aborted before text", fmt.Errorf("openai stream: %w", &streamTransportError{cause: windowsSocketError(10053)}), true},
 		{"stalled", &streamStalledError{idle: time.Minute}, true},
 		{"upstream 503", retryHTTPError(t, "openai", 503, nil), true},
 		{"upstream 429", retryHTTPError(t, "openai", 429, nil), false},

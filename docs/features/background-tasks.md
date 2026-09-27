@@ -44,7 +44,7 @@ Every process that runs turns attaches one waker to its task pool, under one **k
 
 ### What the woken turn looks like
 
-The woken turn starts from a plain statement of the outcome, which is what the model reads: every task with its id, status, label, exit code, runtime and any error, the tool that has the detail (`background_output`), and the reminder that a task which failed, timed out or was stopped did not succeed.
+The woken turn starts from a plain statement of the outcome, which is what the model reads: every task with its id, status, label, exit code, runtime and any error, the tool that has the detail (`background_output`), and the reminder that a task which failed, timed out or was stopped did not succeed. For a subagent run that did not finish it also names the `spawn_agent` call with `resume` that continues the same child ([Resuming a run](subagents.md#resuming-a-run)).
 
 Nobody typed that message, and no surface shows it as if somebody had. The first message of a woken turn is persisted with a marker - `background_wake` in `messages.json` and in `GET /coddy/sessions/{id}/messages`, the tasks with their outcome - and the turn opens with a `background_wake` session update before the message is written, so a client that reloads between the two sees the wake once. As the turn begins, the pool marks its tasks as having woken the agent (`woke_agent` on the task row, kept in the task's record).
 

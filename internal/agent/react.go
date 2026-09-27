@@ -484,6 +484,33 @@ func (a *Agent) noteStopReason(stop string, err error, maxTurns int) {
 // error: the breaker opens after this many (issue #246).
 const maxProviderRecoveries = 2
 
+// maxUnattendedProviderRecoveries is the same bound for a run nobody reads
+// while it works: a subagent a parent delegated to, a scheduled job. After two
+// failed calls a person reading an interactive turn decides what to do next;
+// a child has nobody to type "continue", and when its turn ends the task
+// fails with the work it did so far (issue #389). So it waits out a longer
+// outage: with the default agent.llm_retry_base_ms the pauses run 5 s, 20 s,
+// 80 s, then 2 min twice, about six minutes in all. The run's hard timeout
+// still cuts a pause short, and each recovery takes one of its turns.
+const maxUnattendedProviderRecoveries = 5
+
+// providerRecoveryBudget is how many consecutive failed calls of its provider
+// this turn rides out. The memory child keeps the interactive budget: its
+// report only matters to the user turn that is waiting for it.
+func (a *Agent) providerRecoveryBudget() int {
+	if a.subagent != nil && a.subagent.Kind == "" {
+		return maxUnattendedProviderRecoveries
+	}
+	return maxProviderRecoveries
+}
+
+// providerRecoveryObserver is a sender that shows, as it happens, that the
+// turn lost its provider and runs the step again after a pause: a child's
+// task log says the run is reconnecting instead of going quiet for minutes.
+type providerRecoveryObserver interface {
+	ProviderRecovery(err error, delay time.Duration, attempt, budget int)
+}
+
 // providerRecoveryNudge asks the model to finish an answer a provider failure
 // cut off. It is added to the LLM-facing messages only, after the partial
 // answer the transcript keeps.
@@ -1088,24 +1115,30 @@ func (a *Agent) runReActLoop(
 				continue
 			}
 			// A failure of the provider's lane - a 5xx the resilient wrapper
-			// could not ride out, a stream cut or gone silent, text already
-			// shown or not - does not end the turn (issue #246). A limit
-			// (429) is left to the wrapper and the opt-in limit wait. The
-			// text the user watched stream in is kept, and after a pause the
-			// step runs again, asked to go on from where the answer broke off.
-			// Twice in a row at most; llm_retry_max: 0 turns it off.
-			if providerRecoveries < maxProviderRecoveries && a.cfg.Agent.EffectiveLLMRetryMax() > 0 &&
+			// could not ride out, a stream cut or gone silent, a connection
+			// the remote host closed, text already shown or not - does not
+			// end the turn (issues #246, #389). A limit (429) is left to the
+			// wrapper and the opt-in limit wait. The text the user watched
+			// stream in is kept, and after a pause the step runs again, asked
+			// to go on from where the answer broke off. Twice in a row at
+			// most in an interactive turn, longer in a run nobody reads
+			// (providerRecoveryBudget); llm_retry_max: 0 turns it off.
+			recoveryBudget := a.providerRecoveryBudget()
+			if providerRecoveries < recoveryBudget && a.cfg.Agent.EffectiveLLMRetryMax() > 0 &&
 				ctx.Err() == nil && !a.state.IsUserCancelledTurn() && turn+1 < maxTurns &&
 				llm.IsTransientProviderError(streamErr) {
 				providerRecoveries++
 				kept := a.keepInterruptedAnswer(transport.model, answerBuf.String(), reasoningBuf.String(), reasonClockStart, reasonClockEnd)
 				delay := providerRecoveryDelay(a.cfg.Agent.LLMRetryBaseMS, providerRecoveries, streamErr)
 				a.log.Warn("provider failed mid-turn; running the step again after a pause",
-					"error", streamErr, "delay", delay, "recovery", providerRecoveries, "kept_partial_answer", kept)
+					"error", streamErr, "delay", delay, "recovery", providerRecoveries, "budget", recoveryBudget, "kept_partial_answer", kept)
 				if st := sessionStatePtr(a.state); st != nil {
 					st.AppendUILogNotice(session.CountUserTurns(a.state.GetMessages()), fmt.Sprintf(
 						"The provider failed mid-turn (%v). The turn went on after a %s pause (recovery %d of %d).",
-						streamErr, humanDuration(delay), providerRecoveries, maxProviderRecoveries))
+						streamErr, humanDuration(delay), providerRecoveries, recoveryBudget))
+				}
+				if obs, ok := a.server.(providerRecoveryObserver); ok {
+					obs.ProviderRecovery(streamErr, delay, providerRecoveries, recoveryBudget)
 				}
 				timer := time.NewTimer(delay)
 				select {
