@@ -297,7 +297,7 @@ agent: explore | task: bg_3 | session: sess_9f1c… | outcome: end_turn | turns:
 
 The runtime starts one child of its own: with `memory.enable` on, every user turn launches the **memory subagent**, which recalls and persists the long-term notes ([Long-term memory](memory.md)). It is built on the same machinery as a `spawn_agent` child - a task of kind `agent` in the pool, a child session inside the parent's bundle, the same transcript and log - through a launcher of its own, so not every spawn rule holds for it:
 
-- its task row carries `agent.system: true` and the name `memory`; the Tasks drawer tags its card `memory` where a delegation carries its agent's name, and the model-facing pool tools omit it and refuse its id;
+- its task row carries `agent.system: true` and the name `memory`; the Tasks panel tags its card `memory` where a delegation carries its agent's name, and the model-facing pool tools omit it and refuse its id;
 - it is admitted past `tools.background.max_concurrent` and never counted against it, and `subagents.max_concurrent` does not count it either; its own bounds are two runs per session and sixteen per process;
 - it has six tools its parent does not have, the one exception to the rule that a child's set only narrows: the set is fixed in code, granted only to this child, never through a definition file, and it reaches nothing but the two note roots. Its mode is always `agent`; an ask-mode turn narrows it to the three recall tools;
 - `SubagentStart` and `SubagentStop` do not fire for it (they describe delegations the model chose); inside the child the ordinary events fire with `"kind": "memory"` in the `subagent` block of the payload;
@@ -364,9 +364,9 @@ The Subagents tab is shown under [Scopes and project trust](#scopes-and-project-
 
 *The spawn_agent tool card in the transcript*
 
-![The Tasks drawer with a subagent run in progress](../assets/subagents/tasks-panel-agent-running-dark.png)
+![The Tasks panel with a subagent run in progress](../assets/subagents/tasks-panel-agent-running-dark.png)
 
-*The Tasks drawer with a subagent run in progress*
+*The Tasks panel with a subagent run in progress*
 
 ![The card of a finished run opened in place: Show transcript, the log and the report](../assets/subagents/tasks-detail-agent-finished-dark.png)
 

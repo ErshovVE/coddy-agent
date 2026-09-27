@@ -89,7 +89,7 @@ Read by the Android build only (`internal/platform/android.go`, `android_init.go
 
 ## Docker and compose
 
-These are read by the compose files and the `Dockerfile`, not by the binary. Inside the container the image sets `CODDY_HOME=/home/user/.coddy`, `CODDY_CWD=/workspace` and `CODDY_CONFIG=/home/user/.coddy.yaml`, and `docker-compose.yml` overrides `CODDY_CONFIG` with the mounted `/home/user/.coddy/config.yaml`.
+These are read by the compose files and the `Dockerfile`, not by the binary. Inside the container the image sets `CODDY_HOME=/home/user/.coddy`, `CODDY_CWD=/workspace` and `CODDY_CONFIG=/home/user/.coddy.yaml`, and both compose files override `CODDY_CONFIG` with the mounted `/home/user/.coddy/config.yaml`.
 
 | Variable | Read by | Meaning | Documented in |
 |---|---|---|---|

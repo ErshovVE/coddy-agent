@@ -33,7 +33,7 @@ The allowlists are fixed in `internal/agent.ToolSetForMode`; agent mode is unres
 
 ![The mode menu in the web UI composer](../assets/modes-menu-dark-1280.png)
 
-*The Mode menu of the web UI composer lists Agent, Plan and Ask; the Model selector sits next to it.*
+*The Mode menu of the web UI composer lists Agent, Plan and Ask; the model, the reasoning level and the permission mode follow it on the row.*
 
 ## Plan mode and the plan document
 
@@ -49,9 +49,9 @@ The web UI renders that row as the plan document card in the chat column:
 
 The portable route, for a client without that hook, is to switch to agent mode and mention `@plans/<slug>.plan.md` in the prompt. Details: [Web UI](../surfaces/web-ui.md#plan-document-card-plan-mode-transcript), [ACP protocol](../reference/acp-protocol.md#design-plans-plan-mode).
 
-![The transition from plan mode to agent mode in the web UI](../assets/plan-exit-preview-dark.png)
+![The plan document card in the web UI, with Discard and Run plan](../assets/plan-document-card-dark-1280.png)
 
-*The card the web UI draws when a session leaves plan mode for agent mode (shown in the Russian locale).*
+*The card `plan_write` leaves in a plan-mode chat: the plan's name and summary with Discard and Run plan; the model's answer below repeats the plan.*
 
 ## Ask mode at execution time
 

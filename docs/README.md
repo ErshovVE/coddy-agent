@@ -88,6 +88,7 @@ Task-shaped guides, each a complete path from a goal to a working result, with t
 - [A relay and its nodes in Docker](tutorials/swarm-relay-and-nodes.md) - A Compose stand with a relay and nodes that dial out to it, the tokens, the checks, a mounted node from the console and the browser, scaling by adding nameless workers.
 - [A chain of relays](tutorials/swarm-multi-hop.md) - A second relay behind the first with its own nodes, two-hop mounts, the recursive session list, rings and alternates.
 - [Working with remote nodes](tutorials/swarm-remote-nodes.md) - Driving a node behind a relay from the console, an editor and the browser, what runs where, and which credential opens what.
+- [Android phones as swarm nodes](tutorials/swarm-android-nodes.md) - A phone running Coddy in Termux joins a relay on a laptop or a server and is driven from the relay's web UI and the console, with no open port on the phone.
 
 ## Contributing
 

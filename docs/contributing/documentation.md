@@ -56,16 +56,16 @@ Capture the real surface, never a mockup and never a re-used older image that no
 - **On the page**: an image line followed by a one-line caption in italics, placed next to the paragraph that explains what the image shows. One image per view and state; a table with two images side by side when the page compares them.
 
   ```markdown
-  ![The Tasks drawer with a subagent run in progress](../assets/subagents/tasks-panel-agent-running-dark.png)
+  ![The Tasks panel with a subagent run in progress](../assets/subagents/tasks-panel-agent-running-dark.png)
 
-  *The Tasks drawer with a subagent run in progress*
+  *The Tasks panel with a subagent run in progress*
   ```
 
 Screenshots taken as evidence for a pull request (before and after pairs, every theme, every width) belong to the pull request: drag them into the description on GitHub, which stores them under `user-attachments`, or push them to the orphan `screenshots` branch and link the raw file. They never go under `docs/assets/`.
 
 ## Videos
 
-The five demos under `docs/assets/video/` (console, web UI, Zed and VS Code over ACP, swarm) were recorded with the rig in the demo-videos repository: scripted XTEST takes on Xvfb, post-production with `post.py` (zooms, captions, hotkey badges, intro and outro), then re-encoded for the repository:
+The six demos under `docs/assets/video/` (console, web UI, Zed and VS Code over ACP, the swarm, an Android phone as a swarm node) were recorded with the rig in the demo-videos repository: scripted XTEST takes on Xvfb, post-production with `post.py` (zooms, captions, hotkey badges, intro and outro), then re-encoded for the repository:
 
 ```bash
 ffmpeg -i take.mp4 -vf "scale=1280:-2" -c:v libx264 -preset slow -crf 31 -pix_fmt yuv420p -movflags +faststart -an docs/assets/video/<name>.mp4

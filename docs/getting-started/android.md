@@ -104,6 +104,10 @@ Termux's wake lock (**`termux-wake-lock`**, or from the Termux notification) and
 unrestricted in the battery settings. Android 12 and later also kill the background processes of an
 app beyond a limit (the "phantom process killer"); Termux's documentation describes how to lift it.
 
+A phone can also be a node of a swarm: it dials a relay on a laptop or a server, and the relay's
+web UI and the console drive it like any other machine, with no open port on the phone. The whole
+path is in [Android phones as swarm nodes](../tutorials/swarm-android-nodes.md).
+
 ## Limitations
 
 - Only the 64-bit builds are published, arm64 and x86_64: a 32-bit ARM or x86 Android device is

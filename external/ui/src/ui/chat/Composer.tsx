@@ -2032,6 +2032,18 @@ export function Composer(props: {
   useEffect(() => {
     setSlashActive(0);
   }, [slashPrefix, slashOpen]);
+  // A draft emptied from outside - sent, queued, or run as a browser command -
+  // fires no change event on the textarea, so the pickers would keep the menu
+  // opened on the old draft over the empty composer. Nothing is left to
+  // complete, so they close.
+  useEffect(() => {
+    if (props.value === "" && pickerOpen) {
+      dismissSlashAtPickers();
+    }
+    // Only the draft moving matters: the pickers opening on a non-empty draft
+    // must not re-run this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.value]);
   // Hide the Skills group when only built-in commands match, so a lone command
   // does not sit under an empty "Skills" header.
   const showSkillsSection =

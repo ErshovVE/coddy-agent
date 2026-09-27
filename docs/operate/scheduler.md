@@ -32,11 +32,11 @@ REST routes under **`/coddy/scheduler`** require **`-tags=http,scheduler`**; see
 
 ![The scheduler drawer with three jobs, one paused](../assets/screenshot-fullhd-scheduler.png)
 
-*The scheduler drawer with three jobs, one paused*
+*The scheduler drawer: three jobs with their next run, one paused, one with the outcome of its last run, and Runs and Run now on every row*
 
-![The job editor: cron hint, mode and model, the markdown body](../assets/screenshot-fullhd-scheduler-job.png)
+![The job editor: cron hint, mode, model, subagent and permission mode, the markdown body](../assets/screenshot-fullhd-scheduler-job.png)
 
-*The job editor: cron hint, mode and model, the markdown body*
+*The job editor: the cron hint, the mode, the model, the subagent and the permission mode of a run, the markdown body, and Runs, Pause and Delete at the foot*
 
 Jobs are **`*.md`** files **directly** under **`scheduler.dir`**. Nested subdirectories are not used for discovery.
 
