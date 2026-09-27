@@ -6,7 +6,8 @@ Feature: Plugins published as zip archives
   the plugin root from the top of the archive or from the one folder that
   wraps it, and installs the skills its plugin manifest names: the ones
   "skills" in .claude-plugin/plugin.json declares, else the folders under
-  skills/. An archive without a manifest is searched for every SKILL.md, as a
+  skills/, else the SKILL.md at the plugin root, for a plugin that is one
+  skill. An archive without a manifest is searched for every SKILL.md, as a
   cloned repository is. No git process is started for it, and the plugin
   command touches only the marketplace it names.
 
@@ -32,6 +33,13 @@ Feature: Plugins published as zip archives
     Then the plugin command answers "1 added, 0 updated, 0 failed."
     And the skill "ru-text" is installed with its executable script "scripts/run.sh"
     And the skill "corpus" is not installed
+
+  Scenario: A plugin that is one skill at its root installs that skill
+    Given an https marketplace "neuraldeep" publishing the plugin "logika" as a zip archive with its skill at the plugin root
+    And I have run the plugin command "marketplace add <neuraldeep>"
+    When I run the plugin command "install logika@neuraldeep"
+    Then the plugin command answers "Installed logika@neuraldeep. 1 added, 0 updated, 0 failed."
+    And the skill "logika" is installed with its executable script "scripts/run.sh"
 
   Scenario: A new archive of the plugin is offered as an update and installed by sync
     Given an https marketplace "catalog" publishing the plugin "demo" as a zip archive with its sha256

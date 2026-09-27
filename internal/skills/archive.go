@@ -14,9 +14,10 @@ package skills
 // the archive or the one folder that wraps everything. When it carries a plugin
 // manifest (.claude-plugin/plugin.json, else .codex-plugin/plugin.json), the
 // skills installed are the ones the manifest declares in "skills", or the
-// folders under skills/ when it declares none, which is what Claude Code
-// installs from a plugin; an archive without a manifest is searched for every
-// SKILL.md, the way a cloned repository is. git is never started.
+// folders under skills/ when it declares none, or the SKILL.md at the plugin
+// root when there are none of those either, which is what Claude Code installs
+// from a plugin; an archive without a manifest is searched for every SKILL.md,
+// the way a cloned repository is. git is never started.
 
 import (
 	"archive/zip"
@@ -529,10 +530,11 @@ func pluginManifestPath(dir string) string {
 //
 // With a manifest they are what its "skills" declares - a path or a list of
 // paths, relative to the root, each either a skill folder or a folder of skill
-// folders - or, when it declares none, the skill folders under skills/. A
-// path that would leave the root is dropped, as an archive entry would be. So
-// a SKILL.md elsewhere in a plugin (test data, examples) is never taken for a
-// skill of the plugin.
+// folders - or, when it declares none, the skill folders under skills/, or,
+// when there are none of those either, the root itself if it holds a SKILL.md:
+// a plugin that is one skill. A path that would leave the root is dropped, as
+// an archive entry would be. So a SKILL.md elsewhere in a plugin (test data,
+// examples) is never taken for a skill of the plugin.
 //
 // Without a manifest every SKILL.md under the root counts, the way a cloned
 // repository is searched. Finding no skill at all is an error.
@@ -579,6 +581,13 @@ func archiveSkills(root, manifest string) ([]skillHit, error) {
 	}
 	if !declared {
 		addFolder(filepath.Join(root, "skills"), false)
+		// No skill folder under skills/: a plugin that is one skill keeps it at
+		// its root (EvilFreelancer/logika does), and Claude Code installs that.
+		if len(byName) == 0 && hasSkillFile(root) {
+			if name := rootSkillName(root, manifest); name != "" {
+				byName[name] = skillHit{dir: root, name: name}
+			}
+		}
 	}
 	for _, p := range paths {
 		rel, err := archiveEntryPath(strings.TrimSpace(p))
@@ -596,7 +605,7 @@ func archiveSkills(root, manifest string) ([]skillHit, error) {
 		if declared {
 			return nil, fmt.Errorf("no SKILL.md in the skill folders %s names", manifestName(manifest))
 		}
-		return nil, fmt.Errorf("no SKILL.md in skills/<name>/, and %s names no skill folders", manifestName(manifest))
+		return nil, fmt.Errorf("no SKILL.md in skills/<name>/ or at the plugin root, and %s names no skill folders", manifestName(manifest))
 	}
 	out := make([]skillHit, 0, len(byName))
 	for _, h := range byName {
@@ -604,6 +613,25 @@ func archiveSkills(root, manifest string) ([]skillHit, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	return out, nil
+}
+
+// rootSkillName names the skill a plugin keeps at its root: the name its
+// SKILL.md gives, else the plugin's name from its manifest.
+func rootSkillName(root, manifest string) string {
+	if name := skillNameForDir(root, root); name != "" {
+		return name
+	}
+	data, err := os.ReadFile(manifest) //nolint:gosec // a manifest inside our own unpack folder
+	if err != nil {
+		return ""
+	}
+	var m struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(data, &m) != nil {
+		return ""
+	}
+	return strings.TrimSpace(m.Name)
 }
 
 // manifestSkillPaths reads the "skills" field of a plugin manifest: declared

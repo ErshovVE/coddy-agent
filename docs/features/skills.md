@@ -306,9 +306,12 @@ the same words after `/plugin` in chat, or the Settings install search) never st
   `.claude-plugin/plugin.json` (or `.codex-plugin/plugin.json`), only the skills the manifest names are
   installed: the folders its `skills` field lists (a path or a list of paths relative to the root, each
   a skill folder or a folder of skill folders; a path that leaves the root is ignored), or the folders
-  under `skills/` when it lists none. A `SKILL.md` elsewhere in the plugin, in its test data or
-  examples, is not taken for a skill. An archive without a manifest is searched for every `SKILL.md`,
-  as a clone is.
+  under `skills/` when it lists none, or, when `skills/` holds no skill folder either, the plugin root
+  itself if it has a `SKILL.md`: a plugin that is one skill, named by the `name` of that `SKILL.md`,
+  else by the plugin's. A `SKILL.md` elsewhere in the plugin, in its test data or examples, is not
+  taken for a skill, and a skill must be a folder: a flat `skills/<name>.md` is not one. An archive
+  without a manifest is searched for every `SKILL.md`, as a clone is; a git plugin is searched that
+  way too, so its root `SKILL.md` is found as well.
 - **Executable scripts.** A file the archive marks executable is written `0755`, any other `0644`.
 
 The lockfile records the archive address next to the marketplace, and the version as described in

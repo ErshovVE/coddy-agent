@@ -873,3 +873,65 @@ func TestInstallRefusesNamesOfTheManagedDirsOwnFiles(t *testing.T) {
 		t.Fatalf("lock = %+v, want older and good", got)
 	}
 }
+
+// TestGitPluginsInstallTheSkillAtTheirRoot: a plugin that is one skill, its
+// SKILL.md at the plugin root and no "skills" field in its manifest, installs
+// that skill from git too - cloned from its own repository (a url source) or
+// read from inside the marketplace repository (a path source). Git plugins are
+// searched for every SKILL.md, so the root one is found without the rule
+// archives follow.
+func TestGitPluginsInstallTheSkillAtTheirRoot(t *testing.T) {
+	offlineSystemSources(t)
+	if !gitws.GitAvailable() {
+		t.Skip("git binary not available")
+	}
+	writeRootSkillPlugin := func(dir, name string) {
+		t.Helper()
+		files := map[string]string{
+			filepath.Join(".claude-plugin", "plugin.json"): `{"name":"` + name + `"}`,
+			"SKILL.md":                                 "---\nname: " + name + "\ndescription: d\n---\n",
+			filepath.Join("commands", "review.md"):     "Review the argument.\n",
+			filepath.Join("references", "concepts.md"): "concepts\n",
+		}
+		for rel, body := range files {
+			p := filepath.Join(dir, rel)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	pluginRepo := t.TempDir()
+	writeRootSkillPlugin(pluginRepo, "logika")
+	gitCommitAllRepo(t, pluginRepo, true, "plugin")
+
+	market := t.TempDir()
+	writeRootSkillPlugin(filepath.Join(market, "plugins", "rooted"), "rooted")
+	if err := os.MkdirAll(filepath.Join(market, ".claude-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"m","plugins":[` +
+		`{"name":"logika","source":{"source":"url","url":"file://` + filepath.ToSlash(pluginRepo) + `"}},` +
+		`{"name":"rooted","source":"./plugins/rooted"}]}`
+	if err := os.WriteFile(filepath.Join(market, ".claude-plugin", "marketplace.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommitAllRepo(t, market, true, "marketplace")
+
+	home := t.TempDir()
+	cfg := &config.Config{Paths: config.Paths{Home: home}, Skills: config.Skills{Dirs: []string{filepath.Join(home, "skills")}}}
+	res, err := SyncSource(context.Background(), cfg, "file://"+filepath.ToSlash(market))
+	if err != nil {
+		t.Fatalf("SyncSource: %v", err)
+	}
+	if len(res.Failed) != 0 {
+		t.Fatalf("failures: %+v", res.Failed)
+	}
+	for _, name := range []string{"logika", "rooted"} {
+		if _, err := os.Stat(filepath.Join(home, "skills", name, "references", "concepts.md")); err != nil {
+			t.Errorf("skill %q was not installed with its references: %v", name, err)
+		}
+	}
+}

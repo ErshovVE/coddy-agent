@@ -61,6 +61,7 @@ type archivePluginPack struct {
 	wrapped    bool
 	declareSHA bool
 	authorRepo bool // the author's whole repository, test data with a SKILL.md included
+	rootSkill  bool // the plugin is one skill: SKILL.md at its root, no skills/, no "skills" field
 	revision   int
 	archive    []byte
 }
@@ -75,6 +76,22 @@ func (p *archivePluginPack) build() error {
 	}
 	skill := fmt.Sprintf("---\nname: %s\ndescription: the %s skill, published as an archive\n---\n\n# %s\n\nrevision %d\n",
 		p.name, p.name, p.name, p.revision)
+	if p.rootSkill {
+		// Shaped like EvilFreelancer/logika: the manifest names no skills, and
+		// the plugin root is the skill, its command and references beside it.
+		data, err := zipOf(
+			zipEntry{name: ".claude-plugin/plugin.json", body: `{"name":"` + p.name + `","description":"a plugin that is one skill"}`},
+			zipEntry{name: "SKILL.md", body: skill},
+			zipEntry{name: "scripts/run.sh", body: "#!/bin/sh\necho run\n", mode: 0o755},
+			zipEntry{name: "commands/review.md", body: "Review the argument.\n"},
+			zipEntry{name: "references/notes.md", body: "notes\n"},
+		)
+		if err != nil {
+			return err
+		}
+		p.archive = data
+		return nil
+	}
 	entries := []zipEntry{
 		{name: prefix + ".claude-plugin/plugin.json", body: `{"name":"` + p.name + `","description":"an archive plugin"}`},
 		{name: prefix + "skills/" + p.name + "/SKILL.md", body: skill},
@@ -101,6 +118,7 @@ func newPluginPack(name, layout string) (*archivePluginPack, error) {
 		wrapped:    layout == "wrapped in one folder",
 		declareSHA: layout == "with its sha256",
 		authorRepo: layout == "of its author's repository with a SKILL.md in its test data",
+		rootSkill:  layout == "with its skill at the plugin root",
 		revision:   1,
 	}
 	return p, p.build()
@@ -535,7 +553,7 @@ func initializeArchiveScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^a coddy home that also names a git marketplace$`, s.homeWithGitMarketplace)
 	sc.Step(`^a coddy home without skill sources$`, s.homeWithoutSources)
 	sc.Step(`^git is not installed$`, s.gitNotInstalled)
-	sc.Step(`^an https marketplace "([^"]*)" publishing the plugin "([^"]*)" as a zip archive (with the plugin at its root|wrapped in one folder|with its sha256|of its author's repository with a SKILL\.md in its test data)$`, s.publishes)
+	sc.Step(`^an https marketplace "([^"]*)" publishing the plugin "([^"]*)" as a zip archive (with the plugin at its root|wrapped in one folder|with its sha256|of its author's repository with a SKILL\.md in its test data|with its skill at the plugin root)$`, s.publishes)
 	sc.Step(`^an https marketplace "([^"]*)" publishing the plugins "([^"]*)" and "([^"]*)" as zip archives$`, s.publishesTwo)
 	sc.Step(`^the marketplace "([^"]*)" also publishes the plugin "([^"]*)" as a zip archive$`, s.alsoPublishes)
 	sc.Step(`^the address of the marketplace "([^"]*)" is in skills\.sources$`, s.sourceInConfig)

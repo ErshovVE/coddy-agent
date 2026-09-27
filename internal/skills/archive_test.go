@@ -464,6 +464,7 @@ func TestArchiveSkillsFollowThePluginManifest(t *testing.T) {
 		files   map[string]string
 		want    []string
 		wantErr bool
+		errHas  string // a part of the error the case expects
 	}{
 		{
 			name: "no skills field: the folders under skills/ only",
@@ -598,12 +599,70 @@ func TestArchiveSkillsFollowThePluginManifest(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "no skills/ and no skills field",
+			name: "no skills/ and no skills field: the root SKILL.md",
 			files: map[string]string{
 				".claude-plugin/plugin.json": `{"name":"p"}`,
 				"SKILL.md":                   "---\nname: at-the-top\ndescription: d\n---\n",
 			},
+			want: []string{"at-the-top"},
+		},
+		{
+			// Shaped like EvilFreelancer/logika, rpa-init and rpa-gen-rules.
+			name: "a plugin that is one skill, its command and references beside it",
+			files: map[string]string{
+				".claude-plugin/plugin.json": `{"name":"logika","version":"2.0.1"}`,
+				".codex-plugin/plugin.json":  `{"name":"logika","skills":"./."}`,
+				"SKILL.md":                   "---\nname: logika\ndescription: d\n---\n",
+				"commands/review.md":         "Review the argument.",
+				"references/concepts.md":     "",
+				"docs/konspekt.md":           "",
+			},
+			want: []string{"logika"},
+		},
+		{
+			name: "a root SKILL.md without a name takes the plugin's",
+			files: map[string]string{
+				".claude-plugin/plugin.json": `{"name":"the-plugin"}`,
+				"SKILL.md":                   "---\ndescription: d\n---\n",
+			},
+			want: []string{"the-plugin"},
+		},
+		{
+			name: "a root SKILL.md without a name takes the name of a Codex manifest",
+			files: map[string]string{
+				".codex-plugin/plugin.json": `{"name":"cx"}`,
+				"SKILL.md":                  "---\ndescription: d\n---\n",
+			},
+			want: []string{"cx"},
+		},
+		{
+			name: "skills/ with no skill folder in it falls through to the root",
+			files: map[string]string{
+				".claude-plugin/plugin.json": `{"name":"p"}`,
+				"skills/flat.md":             "",
+				"SKILL.md":                   "---\nname: at-the-top\ndescription: d\n---\n",
+			},
+			want: []string{"at-the-top"},
+		},
+		{
+			name: "a declared skills field is not topped up from the root",
+			files: map[string]string{
+				".claude-plugin/plugin.json": `{"name":"p","skills":["./nothing"]}`,
+				"nothing/README.md":          "",
+				"SKILL.md":                   "---\nname: at-the-top\ndescription: d\n---\n",
+			},
 			wantErr: true,
+		},
+		{
+			// Shaped like stitch-design-md: a flat skills/<name>.md is no skill.
+			name: "no skill folder under skills/ and no root SKILL.md",
+			files: map[string]string{
+				".claude-plugin/plugin.json": `{"name":"stitch-design-md"}`,
+				"skills/create-design-md.md": "",
+				"commands/create.md":         "",
+			},
+			wantErr: true,
+			errHas:  "no SKILL.md in skills/<name>/ or at the plugin root",
 		},
 		{
 			name:    "no manifest and no SKILL.md",
@@ -623,6 +682,9 @@ func TestArchiveSkillsFollowThePluginManifest(t *testing.T) {
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("archiveSkills = %+v, want an error", hits)
+				}
+				if tc.errHas != "" && !strings.Contains(err.Error(), tc.errHas) {
+					t.Errorf("error %q does not say %q", err, tc.errHas)
 				}
 				return
 			}
@@ -889,6 +951,16 @@ func TestInstallArchivePluginInstallsWhatItsManifestDeclares(t *testing.T) {
 				{name: "skills/b/SKILL.md", body: "---\nname: b\ndescription: d\n---\n"},
 			},
 			want: []string{"a"},
+		},
+		{
+			name: "a plugin that is one skill at its root, wrapped in a folder",
+			entries: []zipEntry{
+				{name: "logika-main/.claude-plugin/plugin.json", body: `{"name":"logika"}`},
+				{name: "logika-main/SKILL.md", body: "---\nname: logika\ndescription: d\n---\n"},
+				{name: "logika-main/references/concepts.md", body: "concepts"},
+				{name: "logika-main/commands/review.md", body: "review"},
+			},
+			want: []string{"logika"},
 		},
 		{
 			name: "no manifest: every SKILL.md found",
