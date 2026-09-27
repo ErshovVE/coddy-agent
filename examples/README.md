@@ -129,11 +129,27 @@ redirected into `-p -` arriving byte for byte, piped data attached under a typed
 `while read` loop kept whole by `--no-stdin`, refused input sending nothing, and a bare `-p` on a
 pty), the message queue (`cli_e2e_queue.py`: no model at all - the first-use question, steer and
 after-turn messages, `/queue drop` into the input, the deferred prompt answered after the turn),
+MCP servers of every kind (`cli_e2e_mcp_servers.py`: no model at all - a native program the script
+compiles with `go`, an npm package started through the real `npx -y` from a local folder, a
+streamable HTTP and an SSE server the script serves, their tools called in one turn, `/mcp`
+listing all four as connected),
 subagents (`coddy agents trust` then a `spawn_agent` run), toolcalls
 persist, compact, plan files, ask mode, scheduler agent, plus
 console-unique permissions (ask-mode modal) and resume (transcript replay).
 REST-only surfaces (`e2e_scheduler_api`, `e2e_remote`,
 `e2e_background_reap`) have no console equivalent.
+
+Startup timing and the MCP connect: `cli/cli_e2e_startup.py` holds the bounds CI enforces (the
+first frame with a stdio server that never answers, and with 300 skills plus a skill source that
+never answers, which the start must not contact), `cli/bench_tui_startup.py` times the
+console from spawn to its first frame in the same pty (the demo config with
+an empty, a real and a synthetic skill set), `cli/bench_tui_real.py` does it
+on a private copy of the operator's `~/.coddy` (the home itself is never
+written), and `cli/capture_mcp.py` renders the two captures of the console
+connecting its servers after the first frame, with `cli/mcp_stub_server.py`
+as the stdio server that answers at once or never. The numbers behind the
+change are in `docs/plans/console-mcp-startup.md`, and the result file of the
+demo-config run it quotes is committed under `cli/bench_results/`.
 
 ## `swarm/`
 

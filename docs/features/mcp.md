@@ -216,6 +216,15 @@ parts of an answer reach the transcript: Coddy passes the `text` content of a
 The MCP server runs as a subprocess. Communication via stdin/stdout (newline-delimited
 JSON-RPC 2.0).
 
+Coddy runs `command` with `args` exactly as they are written: a program by its path or
+by its name on `PATH`, a package runner such as `npx -y <package>` or `uvx <package>`,
+a container started with `docker run -i`. What the command needs is the operator's to
+provide - Node.js for `npx`, the network for a package that is not in its cache yet -
+and Coddy neither rewrites the arguments nor installs anything. A program, an `npx`
+package, a streamable HTTP server and an SSE server are each run through a real turn by
+`features/mcp_tool_calls.feature` and, in the console, by
+`examples/cli/cli_e2e_mcp_servers.py`.
+
 Configuration in `session/new`:
 ```json
 {
@@ -357,12 +366,25 @@ mcp_servers:
 
 1. On `session/new`, the agent connects every enabled server from the merged
    config.yaml + `~/.coddy/mcp.json` + `./.coddy/mcp.json` list that the workspace
-   trust gate admits, then any ACP client-supplied servers. A session restored from
-   disk - reopened by an editor with `session/load`, or read by the web UI, a chat
-   or the console - connects its configured servers before its first turn instead,
-   through the same gate: reading a stored conversation starts no process, where it
-   used to start a set per session that stayed for the life of the server. Its ACP
-   client-supplied servers still connect on load
+   trust gate admits, then any ACP client-supplied servers. The servers are
+   dialed **concurrently**, each under its own 20-second bound - the servers
+   an ACP client sends too, which get no second try since only that client
+   can declare them again (a new session does): the call costs
+   the slowest server rather than the sum of them, and a server that starts
+   and never answers `initialize` - a stdio command as much as a remote URL
+   that accepts the connection and stays silent - fails alone, with a
+   warning, while the others connect beside it. A session restored from
+   disk - reopened by an editor with `session/load`, or read by the web UI or
+   a chat - connects its configured servers before its first turn instead,
+   through the same gate: reading a stored conversation starts no process,
+   where it used to start a set per session that stayed for the life of the
+   server. Its ACP client-supplied servers still connect on load. The
+   interactive console goes one step further and connects the servers of the
+   session it opens, new or resumed, **after its first frame**
+   ([Console](../surfaces/console.md)): `coddy` draws at once, the footer
+   counts the servers while they come up, and a prompt sent before they have
+   answered waits for its tool list on the status line (`Connecting MCP
+   servers`)
 2. The agent calls `tools/list` on each server and registers the tools
 3. The staged config tools can add, replace, or delete a global `mcp_servers`
    entry while the session is running: `config_set` stages the uci-like command
@@ -405,6 +427,21 @@ confirm-then-commit workflow, and discovery safety checks.
 
 ## Error Handling
 
-- If an MCP server fails to start, the session still proceeds with a warning
+- If an MCP server fails to start, the session still proceeds with a warning,
+  and the server is not dialed again at every turn: a settings reload, its
+  switch (`/mcp`, Settings → MCP servers) or a new session tries it again
+- A server that starts and never answers `initialize` is given up after 20
+  seconds, and the warning names the bound. It is tried once more when the
+  session's next turn starts, because a first start can outlast the bound for
+  a good reason: `npx -y <package>` installs the package before it runs it
+  (16 s for `@modelcontextprotocol/server-everything` on a laptop with an
+  empty npm cache), and the next try starts it from the cache. A server that
+  does not answer the second time either stays down until one of the above.
+  A dial cut short from outside - a save that reconnects many sessions under
+  one deadline, a request that ended - is retried at the next turn as well
+- What the server's own command does before it answers is up to the
+  operator: a package runner such as `npx -y <package>` asks its registry for
+  the latest release on every start and waits on the network, and a version
+  in `args` (`<package>@<version>`) is what keeps it off the network
 - Failed MCP tool calls return an error observation to the LLM
 - The LLM can decide to retry, use alternative tools, or inform the user
