@@ -50,6 +50,18 @@ export function EnvironmentChip() {
   // menu has to grow upward. On a relay the composer is gone and the chip is in
   // the swarm header, where growing upward puts the whole menu off the top.
   const opensUp = !!anchor && anchor.top > window.innerHeight / 2;
+  // The menu hangs from the chip's left edge, but in the swarm header the chip
+  // is the last thing on the right, so the menu is kept inside the window. The
+  // width is the one styles.css gives .mode-menu--portal.mode-menu--env.
+  const menuLeft = anchor
+    ? Math.max(
+        12,
+        Math.min(
+          anchor.left,
+          window.innerWidth - Math.min(300, window.innerWidth - 24) - 12,
+        ),
+      )
+    : 0;
   const [health, setHealth] = useState<Record<string, Health>>({});
   const [adding, setAdding] = useState(false);
   const [addName, setAddName] = useState("");
@@ -173,10 +185,10 @@ export function EnvironmentChip() {
                     ? undefined
                     : opensUp
                       ? {
-                          left: anchor.left,
+                          left: menuLeft,
                           bottom: window.innerHeight - anchor.top + 8,
                         }
-                      : { left: anchor.left, top: anchor.bottom + 8 }
+                      : { left: menuLeft, top: anchor.bottom + 8 }
                 }
               >
                 <div className="mode-menu-group-label">

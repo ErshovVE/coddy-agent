@@ -1058,7 +1058,11 @@ is the screen: there is no list of nodes under it, because everything the list d
 - **Header.** Title (relay name) and a subtitle counting relays, agents and offline nodes, then
   **`.swarm-header-actions`** holding the **`headerSlot`** - **`App.tsx`** passes
   **`<EnvironmentChip/>`** there at the relay root, because the composer that normally carries it
-  is not on screen.
+  is not on screen. There the chip is the last thing on the right, so its menu, which hangs from
+  the chip's left edge, is kept inside the window with a **12px** margin (its **300px** width is
+  known from the stylesheet); hung from the chip alone it ran past the window at 1280 px and hid
+  the entries a token is added with. Pinned by **`EnvironmentChip.test.tsx`** and
+  **`features/web_ui_menus.feature`**.
 - **The click lands on the question.** Spotting on the map that a box is asking is half the job:
   clicking a node whose sessions include one waiting on a permission prompt opens *that* session,
   then one with a turn in flight, freshest first; only a node with neither opens its own home
