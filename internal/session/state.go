@@ -218,6 +218,15 @@ type State struct {
 	// subagent.go), a scheduled run included; nil for ordinary chats and for
 	// the job session a scheduled run hangs under.
 	subagent *SubagentMeta
+	// childRun marks the state a run of the subagent runtime works on, from
+	// CreateSubagentSession to RetireSubagentSession, as opposed to a finished
+	// child's transcript a surface loaded to show it. Set before the state is
+	// published and never changed, so it is read without the lock.
+	childRun bool
+	// superseded is raised on a loaded copy of a child's transcript when a
+	// resumed run takes its live entry over: from then on the copy's persist
+	// hook writes nothing, since the run's state owns the bundle.
+	superseded atomic.Bool
 
 	// sessionMCPDecls are the ACP client-supplied MCP declarations this session
 	// dialed, kept so a child session can redial them: they exist nowhere in
@@ -502,6 +511,10 @@ func (s *State) Subagent() *SubagentMeta {
 	out.Scheduler = s.subagent.Scheduler.clone()
 	return &out
 }
+
+// supersede marks the state as replaced in the live map by another state of
+// the same session, which owns the bundle from now on.
+func (s *State) supersede() { s.superseded.Store(true) }
 
 // IsSubagentRun reports whether this session is a child spawned by another
 // session, and therefore a read-only transcript for everyone but its own run.

@@ -330,6 +330,46 @@ func TestProviderRecoveryDelay(t *testing.T) {
 	}
 }
 
+// TestProviderRecoveryBudget: an interactive turn rides out two failed calls of
+// its provider in a row and then leaves the decision to the person reading it;
+// a run nobody reads - a subagent a parent delegated to, a scheduled job - has
+// nobody to type "continue", so it waits out a longer outage (issue #389). The
+// memory child keeps the short budget: its report only matters to the turn
+// that is waiting for it.
+func TestProviderRecoveryBudget(t *testing.T) {
+	cases := []struct {
+		name string
+		sub  *session.SubagentMeta
+		want int
+	}{
+		{"interactive turn", nil, maxProviderRecoveries},
+		{"delegated subagent", &session.SubagentMeta{Name: "general"}, maxUnattendedProviderRecoveries},
+		{"scheduled run", &session.SubagentMeta{Name: "nightly", Scheduler: &session.SchedulerRunMeta{JobID: "nightly"}}, maxUnattendedProviderRecoveries},
+		{"memory child", &session.SubagentMeta{Name: "memory", Kind: session.SubagentKindMemory}, maxProviderRecoveries},
+	}
+	for _, c := range cases {
+		a := &Agent{cfg: &config.Config{}, subagent: c.sub}
+		if got := a.providerRecoveryBudget(); got != c.want {
+			t.Errorf("%s: budget = %d, want %d", c.name, got, c.want)
+		}
+	}
+	if maxUnattendedProviderRecoveries <= maxProviderRecoveries {
+		t.Fatalf("an unattended run must wait longer than an interactive turn: %d <= %d", maxUnattendedProviderRecoveries, maxProviderRecoveries)
+	}
+	// With the default retry base the unattended ladder climbs 5 s, 20 s and
+	// 80 s, then holds at the cap: about six minutes before the run gives up.
+	want := []time.Duration{5 * time.Second, 20 * time.Second, 80 * time.Second, maxProviderRecoveryDelay, maxProviderRecoveryDelay}
+	if len(want) != maxUnattendedProviderRecoveries {
+		t.Fatalf("the ladder below lists %d pauses, the budget is %d", len(want), maxUnattendedProviderRecoveries)
+	}
+	plain := errors.New("read: connection reset by peer")
+	for i, w := range want {
+		if got := providerRecoveryDelay(0, i+1, plain); got != w {
+			t.Errorf("pause before recovery %d = %s, want %s", i+1, got, w)
+		}
+	}
+}
+
 // TestStopNoticeNamesTheLimitAndTheWayOn: a top-level turn stopped by its
 // step limit is told to continue with a message; a subagent's transcript
 // takes none, so its notice points at the limit or a new run instead.

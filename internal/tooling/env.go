@@ -226,6 +226,11 @@ type SpawnRequest struct {
 	ExpectedSeconds int
 	TimeoutSeconds  int
 	NotifyOnFinish  bool
+	// Resume names an earlier run of this session to continue instead of
+	// starting a new child: the task id or the child session id a spawn_agent
+	// result named. The child keeps its transcript and takes Prompt as its
+	// next message.
+	Resume string
 }
 
 // CompactRequest is one compact_context call.

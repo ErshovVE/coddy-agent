@@ -111,6 +111,9 @@ type Manager struct {
 		// afterSubagentPublish runs once a child state is in the live map and
 		// before its bundle exists.
 		afterSubagentPublish func(*State)
+		// beforeSubagentPublish runs once a child state is built (for a
+		// resumed child: its bundle read) and before it is published.
+		beforeSubagentPublish func(*State)
 		// beforeTurnAdmission runs at the start of beginTurn, after the
 		// caller resolved its state and before anything is registered.
 		beforeTurnAdmission func(sessionID string)
@@ -382,6 +385,12 @@ func (m *Manager) SetServer(server acp.UpdateSender) {
 func (m *Manager) makePersist(st *State) func() {
 	return func() {
 		if m.store == nil || st == nil || strings.TrimSpace(st.SessionDir) == "" {
+			return
+		}
+		if st.superseded.Load() {
+			// Another state owns the bundle now (a resumed child took over
+			// the copy a surface had loaded): two writers would put the older
+			// history back over the run's.
 			return
 		}
 		if err := m.store.Save(st); err != nil {
