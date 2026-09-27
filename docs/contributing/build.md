@@ -67,7 +67,7 @@ Output: **`dist/coddy_<version>_linux_<arch>.deb`** and **`.rpm`**. Knobs:
 | Variable | Default | What |
 |----------|---------|------|
 | **`PKG_ARCHS`** | host **`GOARCH`** | architectures to package, e.g. **`"amd64 arm64"`** |
-| **`PKG_TAGS`** | **`http ui scheduler memory cli`** | build tags for the packaged binary |
+| **`PKG_TAGS`** | **`http ui scheduler memory cli gateway swarm`** | build tags for the packaged binary |
 | **`DIST_DIR`** | **`dist`** | where the packages land |
 
 ```bash
@@ -93,6 +93,13 @@ fails until **`packaging/systemd/coddy.service`** matches it byte for byte. The 
 packages** CI job then checks that both package formats carry that file and the maintainer
 scripts.
 
+The packages suggest **`tmux`** and require nothing. Coddy runs without it, and its console runs
+well inside it, where a session outlives a closed terminal or a dropped SSH connection. A
+suggestion is named and never installed - **`apt`** and **`zypper`** list it during the install,
+**`dnf`** keeps it in the metadata (**`rpm -q --suggests`**) - so the choice stays with the user.
+The **Distribution packages** CI job checks that the deb and the rpm suggest it and neither
+requires nor recommends it.
+
 Version strings are normalised for the two formats by **`scripts/package-version.sh`** - rpm forbids
 **`-`** in a version and dpkg reads the last one as the start of the Debian revision, so
 **`1.0.8-5-gb6b7d31-dirty`** is packaged as **`1.0.8+5.gb6b7d31.dirty`**, which both accept and both
@@ -117,7 +124,9 @@ brew install --cask dist/coddy.rb
 ```
 
 The cask links **`coddy`**, **`coddy.1`** and both completion scripts, which is why the release
-**`darwin`** and **`linux`** archives carry those files beside the binary. Each release publishes
+**`darwin`** and **`linux`** archives carry those files beside the binary. It recommends **`tmux`**
+in its **`caveats`** rather than declaring it: a cask's **`depends_on`** has no optional form, and
+Coddy runs without tmux, so the cask names it and installs nothing. Each release publishes
 **`coddy.rb`** as an asset, and **`brew install --cask <url>`** installs from it.
 
 ### Homebrew formula

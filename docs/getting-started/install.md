@@ -82,11 +82,16 @@ published, and **`SHA256SUMS`** beside them covers the packages too:
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
+The packages suggest **`tmux`** and do not install it. Coddy runs without it, and its console runs
+well inside it: a session there outlives a closed terminal or a dropped SSH connection. **`apt`**
+lists it under *Suggested packages*; add it with **`sudo apt-get install tmux`** or
+**`sudo dnf install tmux`**.
+
 ### What the package installs
 
 | Path | What |
 |------|------|
-| **`/usr/bin/coddy`** | The full binary (**`http`**, **`ui`**, **`scheduler`**, **`memory`**, **`cli`**) |
+| **`/usr/bin/coddy`** | The full binary (**`http`**, **`ui`**, **`scheduler`**, **`memory`**, **`cli`**, **`gateway`**, **`swarm`**) |
 | **`/usr/share/man/man1/coddy.1.gz`** | **`man coddy`** |
 | **`/usr/share/bash-completion/completions/coddy`** | bash completion |
 | **`/usr/share/zsh/site-functions/_coddy`** | zsh completion |
@@ -157,7 +162,9 @@ brew install --cask https://github.com/coddy-project/coddy-agent/releases/latest
 
 Every release publishes **`coddy.rb`** beside the archives, rendered with the checksums of the macOS
 archives of that same tag. The cask installs the same **`coddy`** binary the macOS archive carries,
-plus **`man coddy`** and the bash and zsh completions. Removal goes through Homebrew:
+plus **`man coddy`** and the bash and zsh completions. It does not install **`tmux`**: its caveats,
+printed after the install and by **`brew info --cask coddy`**, recommend **`brew install tmux`**
+for a console session that outlives the terminal. Removal goes through Homebrew:
 
 ```bash
 brew uninstall --cask coddy      # brew zap --cask coddy also removes ~/.coddy

@@ -409,6 +409,24 @@ jobs:
             fi
           done
 
+      # tmux is suggested and nothing more (issue #326): apt and zypper name it
+      # during the install and leave the choice to the user. A Depends or a
+      # Recommends would install it behind the user's back.
+      - name: Check that the packages suggest tmux without pulling it in
+        run: |
+          for package in dist/*.deb; do
+            dpkg-deb --field "$package" Suggests | grep -qw tmux || { echo "::error::$package does not suggest tmux"; exit 1; }
+            if dpkg-deb --field "$package" Depends Pre-Depends Recommends | grep -qw tmux; then
+              echo "::error::$package depends on or recommends tmux"; exit 1
+            fi
+          done
+          for package in dist/*.rpm; do
+            rpm -qp --suggests "$package" | grep -qw tmux || { echo "::error::$package does not suggest tmux"; exit 1; }
+            if rpm -qp --requires "$package" | grep -qw tmux || rpm -qp --recommends "$package" | grep -qw tmux; then
+              echo "::error::$package requires or recommends tmux"; exit 1
+            fi
+          done
+
       # Same reasoning one step further: the Homebrew cask is rendered only by
       # the release job and the formula only by hand, so a template that stopped
       # being valid Ruby would surface at the worst moment. Rendering needs a
