@@ -41,7 +41,13 @@ _coddy() {
             case $words[1] in
                 sessions) _values 'subcommand' list export ;;
                 skills)   _values 'subcommand' list enable disable add sync remove ;;
-                plugin)   _values 'subcommand' marketplace install remove enable disable ;;
+                plugin)
+                    if (( CURRENT == 3 )) && [[ $words[2] == marketplace ]]; then
+                        _values 'marketplace subcommand' add list update remove sync
+                    elif (( CURRENT == 2 )); then
+                        _values 'subcommand' marketplace install remove enable disable list
+                    fi
+                    ;;
                 mcp|agents|hooks) _values 'subcommand' list trust untrust ;;
                 providers)
                     if (( CURRENT > 3 )); then
