@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,7 +78,7 @@ func HTTPRequestTool() *tooling.Tool {
 					},
 					"headers": map[string]interface{}{
 						"type": "object",
-						"description": "Request headers by name. They override every default, User-Agent, Content-Type and Host included. " +
+						"description": "Request headers by name. They override every default: the tool's own User-Agent, Content-Type and Host, and the headers the operator configured for every request. " +
 							"An empty value removes a header the tool would otherwise send. Content-Length must match the body; Transfer-Encoding accepts chunked.",
 						"additionalProperties": map[string]interface{}{"type": "string"},
 					},
@@ -156,7 +157,8 @@ type HTTPRequest struct {
 	Method string
 	// URL carries the query parameters merged in; its fragment is dropped.
 	URL *url.URL
-	// Header is what the request sends beyond what net/http adds itself. A
+	// Header is what the request sends beyond what net/http adds itself: the
+	// call's headers over the operator's default headers over the tool's own. A
 	// User-Agent with an empty value means none is sent.
 	Header http.Header
 	// Host overrides the Host header when set.
@@ -180,6 +182,9 @@ type HTTPRequest struct {
 	Rationale string
 
 	body requestBody
+	// configured names, sorted, the headers Header carries from the
+	// operator's default headers: the ones the call did not name itself.
+	configured []string
 }
 
 // LocalFile is one workspace file a request uploads.
@@ -297,8 +302,25 @@ type httpRequestArgs struct {
 }
 
 // ParseHTTPRequest validates http_request arguments against the workspace cwd.
-// Local files are checked to exist but not read.
+// Local files are checked to exist but not read. No operator default headers
+// apply: webfetch and a URL mention build their requests through it.
 func ParseHTTPRequest(argsJSON, cwd string) (*HTTPRequest, error) {
+	return parseHTTPRequest(argsJSON, cwd, nil)
+}
+
+// ParseHTTPRequestInEnv parses an http_request call the way the tool sends it
+// in env: paths resolve against env's working directory, and the operator's
+// default headers (tools.http_request.default_headers) sit between the tool's
+// own and the call's. The tool sends what this returns and the permission gate
+// shows and decides on the same value.
+func ParseHTTPRequestInEnv(argsJSON string, env *tooling.Env) (*HTTPRequest, error) {
+	if env == nil {
+		return parseHTTPRequest(argsJSON, "", nil)
+	}
+	return parseHTTPRequest(argsJSON, env.CWD, env.HTTPDefaultHeaders)
+}
+
+func parseHTTPRequest(argsJSON, cwd string, defaultHeaders map[string]string) (*HTTPRequest, error) {
 	args, err := tooling.ParseArgs[httpRequestArgs](argsJSON)
 	if err != nil {
 		return nil, err
@@ -344,7 +366,7 @@ func ParseHTTPRequest(argsJSON, cwd string) (*HTTPRequest, error) {
 	if !httpguts.ValidHeaderFieldName(req.Method) {
 		return nil, fmt.Errorf("method %q is not a valid HTTP method token", args.Method)
 	}
-	if err := req.parseHeaders(args.Headers); err != nil {
+	if err := req.parseHeaders(args.Headers, defaultHeaders); err != nil {
 		return nil, err
 	}
 	if out := strings.TrimSpace(args.OutputFile); out != "" {
@@ -513,7 +535,11 @@ func (r *HTTPRequest) parseMultipart(parts []formPartArgs, cwd string) error {
 	return nil
 }
 
-func (r *HTTPRequest) parseHeaders(raw map[string]json.RawMessage) error {
+// parseHeaders lays the headers out in three layers: the call's own, then the
+// operator's defaults for the names the call left alone, then the tool's own
+// User-Agent and the payload's Content-Type for the names neither named. An
+// empty value in either of the first two layers leaves the header out.
+func (r *HTTPRequest) parseHeaders(raw map[string]json.RawMessage, defaults map[string]string) error {
 	names := make([]string, 0, len(raw))
 	for name := range raw {
 		names = append(names, name)
@@ -568,6 +594,9 @@ func (r *HTTPRequest) parseHeaders(raw map[string]json.RawMessage) error {
 		}
 		r.Header.Set(key, value)
 	}
+	if err := r.applyDefaultHeaders(defaults, given, &removed); err != nil {
+		return err
+	}
 	if !given["User-Agent"] {
 		r.Header.Set("User-Agent", userAgent)
 	}
@@ -581,6 +610,62 @@ func (r *HTTPRequest) parseHeaders(raw map[string]json.RawMessage) error {
 			r.Header["User-Agent"] = []string{""}
 		}
 	}
+	return nil
+}
+
+// credentialHeaderName matches a header name that carries a credential: the
+// rule the web UI masks request and response headers by (SENSITIVE_HEADER in
+// external/ui/src/ui/chat/structuredToolDisplay.ts).
+var credentialHeaderName = regexp.MustCompile(`(?i)(authorization|cookie|token|secret|password|api[-_]?key)`)
+
+// notForEveryRequest are the headers a default for every request cannot
+// stand for: the ones the tool takes from each call - the host of its address,
+// the type of its payload and the payload's framing - and a proxy's
+// credential, which an https request would carry to the origin through the
+// tunnel. The loader refuses them in tools.http_request.default_headers; this
+// is the same rule where the request is built.
+var notForEveryRequest = map[string]bool{
+	"Host":                true,
+	"Content-Type":        true,
+	"Content-Length":      true,
+	"Transfer-Encoding":   true,
+	"Proxy-Authorization": true,
+}
+
+// applyDefaultHeaders adds the operator's default headers for the names the
+// call did not give, marking them given so the tool's own defaults stay out.
+// An empty value leaves the header out, as it does in a call.
+func (r *HTTPRequest) applyDefaultHeaders(defaults map[string]string, given map[string]bool, removed *[]string) error {
+	names := make([]string, 0, len(defaults))
+	for name := range defaults {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, rawName := range names {
+		name := strings.TrimSpace(rawName)
+		if !httpguts.ValidHeaderFieldName(name) {
+			return fmt.Errorf("default header %q is not a valid header name", rawName)
+		}
+		key := textproto.CanonicalMIMEHeaderKey(name)
+		if notForEveryRequest[key] {
+			return fmt.Errorf("default header %s cannot be set for every request", key)
+		}
+		value := strings.TrimSpace(defaults[rawName])
+		if !httpguts.ValidHeaderFieldValue(value) {
+			return fmt.Errorf("default header %s: the value may not contain line breaks or control characters", key)
+		}
+		if given[key] {
+			continue
+		}
+		given[key] = true
+		if value == "" {
+			*removed = append(*removed, key)
+			continue
+		}
+		r.Header.Set(key, value)
+		r.configured = append(r.configured, key)
+	}
+	sort.Strings(r.configured)
 	return nil
 }
 
@@ -671,6 +756,10 @@ func (r *HTTPRequest) Describe() string {
 	if r.Host != "" {
 		lines = append(lines, "Host: "+r.Host)
 	}
+	configured := make(map[string]bool, len(r.configured))
+	for _, name := range r.configured {
+		configured[name] = true
+	}
 	for _, name := range sortedKeys(r.Header) {
 		for _, v := range r.Header[name] {
 			if v == "" {
@@ -680,6 +769,13 @@ func (r *HTTPRequest) Describe() string {
 			// one the model wrote itself is shown as written.
 			if name == "Content-Type" && r.body.kind == "form_data" && v == r.body.contentType {
 				v = "multipart/form-data; boundary=<generated>"
+			}
+			// A credential the operator configured for every request is known
+			// to the configuration alone; the prompt travels further - to a
+			// chat, a notification hook, a shared screen - so it names the
+			// header and hides the value.
+			if configured[name] && credentialHeaderName.MatchString(name) {
+				v = "<redacted>"
 			}
 			lines = append(lines, name+": "+v)
 		}
@@ -692,6 +788,11 @@ func (r *HTTPRequest) Describe() string {
 		for _, l := range lines {
 			b.WriteString("  " + l + "\n")
 		}
+	}
+	if len(r.configured) > 0 {
+		// The model never wrote these, and one of them may be a credential
+		// the operator set for every request: the prompt says where they came from.
+		b.WriteString("Headers from tools.http_request.default_headers: " + strings.Join(r.configured, ", ") + "\n")
 	}
 	r.describeBody(&b)
 	switch {
@@ -836,11 +937,7 @@ func (r *HTTPRequest) send(ctx context.Context, p transferPolicy) (*transfer, er
 }
 
 func executeHTTPRequest(ctx context.Context, argsJSON string, env *tooling.Env) (string, error) {
-	cwd := ""
-	if env != nil {
-		cwd = env.CWD
-	}
-	req, err := ParseHTTPRequest(argsJSON, cwd)
+	req, err := ParseHTTPRequestInEnv(argsJSON, env)
 	if err != nil {
 		return "", err
 	}

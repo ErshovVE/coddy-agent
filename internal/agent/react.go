@@ -334,7 +334,6 @@ func (a *Agent) Run(ctx context.Context, prompt []acp.ContentBlock) (string, err
 		CWD:              a.state.GetCWD(),
 		PermissionMode:   effectivePermMode(a.state, a.cfg),
 		CommandAllowlist: a.cfg.Tools.CommandAllowlist,
-		HTTPAllowlist:    a.cfg.Tools.HTTPRequest.Allowlist,
 		SessionID:        a.state.GetID(),
 		SessionDir:       sd,
 		ArchiveActiveMarkdown: func() error {
@@ -374,6 +373,7 @@ func (a *Agent) Run(ctx context.Context, prompt []acp.ContentBlock) (string, err
 		WebSearch:         webSearchSettings(a.cfg),
 		PreviewServer:     previewServerSettings(a.cfg),
 	}
+	httpRequestEnv(toolEnv, a.cfg)
 	// The model's own model switch; a subagent runs on what its parent chose.
 	if a.subagent == nil && a.settings() != nil {
 		toolEnv.SwitchModel = a.switchModel
@@ -1458,7 +1458,7 @@ func (a *Agent) runReActLoop(
 			toolDefs = a.currentToolDefinitions(mode)
 			toolEnv.PermissionMode = effectivePermMode(a.state, a.cfg)
 			toolEnv.CommandAllowlist = append([]string(nil), a.cfg.Tools.CommandAllowlist...)
-			toolEnv.HTTPAllowlist = append([]string(nil), a.cfg.Tools.HTTPRequest.Allowlist...)
+			httpRequestEnv(toolEnv, a.cfg)
 			toolEnv.SSHConnectTimeout = a.cfg.Tools.SSHConnectTimeout
 			toolEnv.OutputLineLimits = a.cfg.Tools.OutputLimits.AsMap()
 			toolEnv.Background = a.backgroundPool(sd)
@@ -1808,7 +1808,7 @@ func (a *Agent) executeToolCall(ctx context.Context, tc llm.ToolCall, env *tools
 		if tc.Name == toolweb.ToolHTTPRequest {
 			// Raw arguments would bury the address and the files in JSON;
 			// the prompt shows the request as it would go out.
-			promptBody = permission.HTTPRequestPromptBody(tc.InputJSON, env.CWD)
+			promptBody = permission.HTTPRequestPromptBody(env, tc.InputJSON)
 		}
 		if tc.Name == "config_commit" {
 			// The commit call itself carries no arguments, so the dialog must

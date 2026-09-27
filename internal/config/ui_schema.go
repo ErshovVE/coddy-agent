@@ -490,7 +490,7 @@ func UISchemaMap() map[string]interface{} {
 					[]string{"engines", "engine_timeout_seconds", "total_timeout_seconds", "max_concurrent_engines", "snippet_chars", "cache_ttl_seconds", "searxng_url", "brave_api_key"},
 					nil),
 				"http_request": objectSchema("HTTP requests",
-					"Policy of the http_request tool, the agent's curl. Under ask and accept_edits a request asks unless its destination is allowed here or was approved in the session; bypass never asks.",
+					"Policy of the http_request tool, the agent's curl: where it goes without asking and the headers every request sends. Under ask and accept_edits a request asks unless its destination is allowed here or was approved in the session; bypass never asks.",
 					map[string]interface{}{
 						"allowlist": map[string]interface{}{
 							"type":        "array",
@@ -498,8 +498,14 @@ func UISchemaMap() map[string]interface{} {
 							"description": "Destinations reached without asking: a host (api.github.com), *.example.com, an origin (http://localhost:8080) or an address prefix (https://api.example.com/v1/); \"*\" allows all. Covers uploads and an unchecked certificate; a proxy needs its own entry, and a saved response follows the write policy.",
 							"items":       map[string]interface{}{"type": "string"},
 						},
+						"default_headers": map[string]interface{}{
+							"type":                 "object",
+							"title":                "Default headers",
+							"description":          "Headers every request sends unless the call names them itself, such as a browser User-Agent for a site that turns tools away. A call's own headers win, and an empty value leaves a header out. They go to every destination, so keep credentials out unless that is the intent; Host, Content-Type, Content-Length, Transfer-Encoding and Proxy-Authorization are refused, and webfetch and the model providers never send these.",
+							"additionalProperties": map[string]interface{}{"type": "string"},
+						},
 					},
-					[]string{"allowlist"},
+					[]string{"allowlist", "default_headers"},
 					nil),
 			},
 			[]string{"permission_mode", "command_allowlist", "output_limits", "background", "preview_server", "websearch", "http_request"},

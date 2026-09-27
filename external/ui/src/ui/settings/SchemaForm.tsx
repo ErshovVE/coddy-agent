@@ -58,6 +58,8 @@ export type JsonSchema = {
   description?: string;
   default?: unknown;
   properties?: Record<string, JsonSchema>;
+  /** false closes an object to its properties; a schema describes every value of a map. */
+  additionalProperties?: boolean | JsonSchema;
   items?: JsonSchema;
   enum?: unknown[];
   minimum?: number;
@@ -101,6 +103,22 @@ function placeholderFromDefault(s: JsonSchema): string | undefined {
   return String(s.default);
 }
 
+/**
+ * A map of plain values: an object with no properties of its own whose every
+ * value is a string, such as tools.http_request.default_headers. Its keys are
+ * the operator's, so the form edits it as rows of a name and a value.
+ */
+export function isStringMapSchema(s: JsonSchema): boolean {
+  const values = s.additionalProperties;
+  return (
+    s.type === "object" &&
+    s.properties === undefined &&
+    typeof values === "object" &&
+    values !== null &&
+    values.type === "string"
+  );
+}
+
 export function defaultForSchema(s: JsonSchema): unknown {
   if (s.default !== undefined) {
     if (s.type === "array" && Array.isArray(s.default)) {
@@ -135,6 +153,9 @@ export function defaultForSchema(s: JsonSchema): unknown {
   }
   if (t === "array") {
     return [];
+  }
+  if (isStringMapSchema(s)) {
+    return {};
   }
   if (t === "boolean") {
     return false;
@@ -254,6 +275,17 @@ function SchemaField(props: {
         <LegendWithHint label={label} description={desc} />
         <div className="settings-nested">{fields}</div>
       </fieldset>
+    );
+  }
+
+  if (isStringMapSchema(schema)) {
+    return (
+      <StringMapField
+        label={label}
+        description={desc}
+        value={value}
+        onChange={onChange}
+      />
     );
   }
 
@@ -491,11 +523,134 @@ function ArrayItemControl(props: {
   );
 }
 
-/** A field that renders as a fieldset of its own: a list or a nested object. */
+/** One row of a map being edited: the name as typed, and its value. */
+type MapRow = { name: string; value: string };
+
+function mapRowsOf(value: unknown): MapRow[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  return Object.entries(value as Record<string, unknown>).map(([name, v]) => ({
+    name,
+    value: v === undefined || v === null ? "" : String(v),
+  }));
+}
+
+/** The document the rows stand for: a row without a name is left out, and of
+ * two rows with one name the later one wins, as a later key does in YAML. */
+function mapOfRows(rows: MapRow[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const row of rows) {
+    const name = row.name.trim();
+    if (name !== "") {
+      out[name] = row.value;
+    }
+  }
+  return out;
+}
+
+function sameMap(a: Record<string, string>, b: unknown): boolean {
+  const other = mapOfRows(mapRowsOf(b));
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(other).length &&
+    keys.every((k, i) => Object.keys(other)[i] === k && other[k] === a[k])
+  );
+}
+
+/**
+ * StringMapField edits a map of plain values (isStringMapSchema) as rows of two
+ * bare inputs, the name and then the value, each beside its trash, with Add
+ * under the rows. The rows are the form's own: a row whose name is still empty
+ * stays on screen and out of the document, and so does the earlier of two rows
+ * with one name. A document that stops matching the rows came from outside the
+ * form - a reload, a save elsewhere - and replaces them.
+ */
+function StringMapField(props: {
+  label: string;
+  description: string | undefined;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
+  const { label, description, value, onChange } = props;
+  const { t: tr } = useT();
+  const [rows, setRows] = useState<MapRow[]>(() => mapRowsOf(value));
+  const [shown, setShown] = useState<unknown>(value);
+  if (value !== shown) {
+    // Taken while rendering, like the settings copy itself: an effect would
+    // draw one frame of the stale rows first.
+    setShown(value);
+    if (!sameMap(mapOfRows(rows), value)) {
+      setRows(mapRowsOf(value));
+    }
+  }
+  const update = (next: MapRow[]) => {
+    setRows(next);
+    onChange(mapOfRows(next));
+  };
+  const edit = (i: number, patch: Partial<MapRow>) =>
+    update(rows.map((row, j) => (j === i ? { ...row, ...patch } : row)));
+  return (
+    <fieldset className="settings-fieldset">
+      <LegendWithHint label={label} description={description} />
+      <ul className="settings-array settings-map">
+        {rows.map((row, i) => (
+          <li key={i} className="settings-array-row">
+            <div className="settings-array-row-field settings-map-entry">
+              <input
+                className="settings-input settings-map-name"
+                type="text"
+                value={row.name}
+                placeholder={tr("settings.map.namePlaceholder")}
+                aria-label={tr("settings.map.nameAria", { label, n: i + 1 })}
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  edit(i, { name: e.target.value })
+                }
+              />
+              <input
+                className="settings-input settings-map-value"
+                type="text"
+                value={row.value}
+                placeholder={tr("settings.map.valuePlaceholder")}
+                aria-label={tr("settings.map.valueAria", { label, n: i + 1 })}
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                  edit(i, { value: e.target.value })
+                }
+              />
+            </div>
+            <button
+              type="button"
+              className="settings-btn settings-btn-icon settings-btn-danger settings-array-remove"
+              aria-label={tr("settings.array.removeAria")}
+              title={tr("settings.array.removeTitle")}
+              onClick={() => update(rows.filter((_, j) => j !== i))}
+            >
+              <IconTrash />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <button
+        type="button"
+        className="settings-btn"
+        onClick={() => update([...rows, { name: "", value: "" }])}
+      >
+        {tr("settings.array.add")}
+      </button>
+    </fieldset>
+  );
+}
+
+/** A field that renders as a fieldset of its own: a list, a map or a nested object. */
 function isBlockField(sub: JsonSchema): boolean {
   return (
     (sub.type === "object" && sub.properties !== undefined) ||
-    (sub.type === "array" && sub.items !== undefined)
+    (sub.type === "array" && sub.items !== undefined) ||
+    isStringMapSchema(sub)
   );
 }
 

@@ -114,7 +114,6 @@ func (a *Agent) buildToolEnv(mode, sessionDir string) *tools.Env {
 		CWD:              a.state.GetCWD(),
 		PermissionMode:   effectivePermMode(a.state, a.cfg),
 		CommandAllowlist: a.cfg.Tools.CommandAllowlist,
-		HTTPAllowlist:    a.cfg.Tools.HTTPRequest.Allowlist,
 		SessionID:        a.state.GetID(),
 		SessionDir:       sessionDir,
 		ArchiveActiveMarkdown: func() error {
@@ -149,6 +148,7 @@ func (a *Agent) buildToolEnv(mode, sessionDir string) *tools.Env {
 		BackgroundEnabled: a.cfg.Tools.Background.ResolvedEnabled(),
 		WebSearch:         webSearchSettings(a.cfg),
 	}
+	httpRequestEnv(env, a.cfg)
 	a.applySubagentEnv(env, mode)
 	if a.subagent == nil && a.settings() != nil {
 		env.SwitchModel = a.switchModel
@@ -167,7 +167,7 @@ func (a *Agent) buildToolEnv(mode, sessionDir string) *tools.Env {
 			a.registry = tools.NewRegistryForEnvironment(next, a.environment)
 			env.PermissionMode = effectivePermMode(a.state, next)
 			env.CommandAllowlist = append([]string(nil), next.Tools.CommandAllowlist...)
-			env.HTTPAllowlist = append([]string(nil), next.Tools.HTTPRequest.Allowlist...)
+			httpRequestEnv(env, next)
 			env.SSHConnectTimeout = next.Tools.SSHConnectTimeout
 			env.OutputLineLimits = next.Tools.OutputLimits.AsMap()
 			env.Background = a.backgroundPool(sessionDir)

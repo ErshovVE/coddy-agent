@@ -137,6 +137,10 @@ export const messagesRu: Record<string, string> = {
   "settings.array.backTitle": "Назад к списку",
   "settings.array.empty":
     "Здесь пока пусто. Используйте «Добавить», чтобы создать.",
+  "settings.map.namePlaceholder": "Имя",
+  "settings.map.valuePlaceholder": "Значение",
+  "settings.map.nameAria": "{label} {n}: имя",
+  "settings.map.valueAria": "{label} {n}: значение",
 
   "settings.field.apiBaseFallback": "Базовый URL API",
   "settings.field.modelIdFallback": "Идентификатор модели",
@@ -373,6 +377,16 @@ export const messagesRu: Record<string, string> = {
   "settings.schema.tools.websearch.brave_api_key.ph":
     "Берётся из BRAVE_API_KEY",
   "settings.schema.tools.websearch.searxng_url.ph": "http://localhost:8888",
+  "settings.schema.tools.http_request.label": "HTTP-запросы",
+  "settings.schema.tools.http_request.desc":
+    "Политика инструмента http_request, curl агента. Здесь задано, куда запрос идёт без вопроса и какие заголовки несёт каждый запрос. В режимах ask и accept_edits запрос спрашивает разрешение, если адрес не разрешён здесь и не одобрен в сессии, а bypass не спрашивает никогда.",
+  "settings.schema.tools.http_request.allowlist.label": "Белый список адресов",
+  "settings.schema.tools.http_request.allowlist.desc":
+    'Адреса, куда запрос идёт без вопроса. Хост (api.github.com), *.example.com, origin (http://localhost:8080) или префикс адреса (https://api.example.com/v1/), а "*" разрешает всё. Запись покрывает и загрузку файлов, и непроверенный сертификат. Прокси нужна своя запись, а сохранение ответа в файл следует политике записи.',
+  "settings.schema.tools.http_request.default_headers.label":
+    "Заголовки по умолчанию",
+  "settings.schema.tools.http_request.default_headers.desc":
+    "Заголовки, которые уходят с каждым запросом, если вызов не задал их сам. Например, браузерный User-Agent для сайта, который не отдаёт файлы инструментам. Заголовки вызова важнее, пустое значение убирает заголовок. Они уходят на любой адрес, поэтому учётные данные здесь уместны только намеренно. Host, Content-Type, Content-Length, Transfer-Encoding и Proxy-Authorization не принимаются, а webfetch и провайдеры моделей эти заголовки не отправляют.",
 
   "settings.schema.subagents.desc":
     "Пользовательские дочерние агенты, которым модель может делегировать работу через spawn_agent. Определения хранятся в markdown-файлах с YAML-фронтматтером; каждый запуск выполняется как фоновая задача родительской сессии со своей дочерней сессией и транскриптом.",
@@ -1078,7 +1092,8 @@ export const messagesRu: Record<string, string> = {
   "composer.queueModeSteer": "В текущий ход",
   "composer.queueModeAfterTurn": "После хода",
   "composer.queueChoiceLabel": "Режим очереди по умолчанию",
-  "composer.queueChoiceQuestion": "Куда Enter отправляет сообщение во время хода?",
+  "composer.queueChoiceQuestion":
+    "Куда Enter отправляет сообщение во время хода?",
   "composer.queueChoiceSteer": "В текущий ход",
   "composer.queueChoiceAfterTurn": "После этого хода",
   "composer.queueModeSteerTitle":
@@ -1491,7 +1506,8 @@ export const messagesRu: Record<string, string> = {
   "structuredTool.tls": "Сертификат TLS",
   "structuredTool.tlsNotVerified": "не проверяется",
   "structuredTool.redirects": "Редиректы",
-  "structuredTool.redirectsFollowed": "выполняются в пределах того же источника",
+  "structuredTool.redirectsFollowed":
+    "выполняются в пределах того же источника",
   "structuredTool.responseHeaders": "Заголовки ответа",
   "structuredTool.outputFile": "Сохранено в",
   "structuredTool.status": "Ответ",
@@ -1508,7 +1524,8 @@ export const messagesRu: Record<string, string> = {
   "structuredTool.noTasks": "Фоновых задач нет",
   "structuredTool.noLeftovers": "Процессов от прошлого запуска не осталось",
   "structuredTool.stillRunning": "Ещё выполняется после ожидания {seconds} с",
-  "structuredTool.earlierDropped": "Начало вывода отброшено, полный лог лежит в бандле сессии",
+  "structuredTool.earlierDropped":
+    "Начало вывода отброшено, полный лог лежит в бандле сессии",
   "structuredTool.noOutput": "Вывода пока нет",
   "structuredTool.stops": "Остановка",
   "structuredTool.stopsAfter": "через {seconds} с после запуска",
@@ -1635,8 +1652,7 @@ export const messagesRu: Record<string, string> = {
 
   "workspace.detached": "отсоединённая",
   "workspace.worktree": "worktree",
-  "workspace.worktreeActiveTitle":
-    "Эта сессия работает в отдельном worktree",
+  "workspace.worktreeActiveTitle": "Эта сессия работает в отдельном worktree",
   "workspace.worktreeInactiveTitle":
     "Переход на другую ветку откроется в отдельном worktree",
   "workspace.recent": "Недавние",

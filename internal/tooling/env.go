@@ -26,6 +26,11 @@ type Env struct {
 	// http_request call reaches without a permission prompt.
 	HTTPAllowlist []string
 
+	// HTTPDefaultHeaders is tools.http_request.default_headers: headers every
+	// http_request call sends unless the call names them itself. An empty
+	// value leaves the header out. Nothing but http_request reads them.
+	HTTPDefaultHeaders map[string]string
+
 	// SessionID is the current session identifier (used by plan tools).
 	SessionID string
 

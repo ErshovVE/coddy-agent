@@ -559,3 +559,64 @@ func TestCommitUCICommandsFreshConfigIsBlockStyleWithIntegers(t *testing.T) {
 		t.Fatalf("model = %+v", m)
 	}
 }
+
+// Every value of tools.http_request.default_headers goes to every destination
+// the tool reaches, and one of them may be a credential: config_get shows the
+// model which headers are configured, never what they carry, the way it treats
+// the header values of an MCP server.
+func TestReadConfigPathRedactsDefaultHeaderValues(t *testing.T) {
+	paths := testPathConfig(t, "tools:\n  http_request:\n    default_headers:\n      Authorization: Bearer t0p-secret\n      User-Agent: probe/2\n")
+	for _, key := range []string{".", "tools.http_request", "tools.http_request.default_headers", "tools.http_request.default_headers.Authorization"} {
+		got, err := ReadConfigPath(paths, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(got.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(encoded), "t0p-secret") || strings.Contains(string(encoded), "probe/2") || !got.Redacted {
+			t.Fatalf("config_get %s showed a header value: %s", key, encoded)
+		}
+		if key != "tools.http_request.default_headers.Authorization" && !strings.Contains(string(encoded), "Authorization") {
+			t.Fatalf("config_get %s hid which headers are configured: %s", key, encoded)
+		}
+	}
+}
+
+// A header is a key of a map, not a field of a struct: config_set addresses it
+// by its name, sets it, and deletes it again, and the staged command names the
+// header without its value.
+func TestCommitUCICommandsSetsAndDeletesADefaultHeader(t *testing.T) {
+	paths := testPathConfig(t, "logger:\n  level: info\n")
+	cmds := mustParseUCI(t, "set tools.http_request.default_headers.User-Agent=Mozilla/5.0 (X11; Linux x86_64) Chrome/131.0.0.0")
+	if shown := cmds[0].RedactedString(); strings.Contains(shown, "Mozilla") || !strings.Contains(shown, "default_headers.User-Agent") {
+		t.Errorf("the staged command reads %q", shown)
+	}
+	if _, err := CommitUCICommands(paths, cmds); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadWithPaths(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Tools.HTTPRequest.DefaultHeaders["User-Agent"]; got != "Mozilla/5.0 (X11; Linux x86_64) Chrome/131.0.0.0" {
+		t.Fatalf("User-Agent = %q after the set", got)
+	}
+	if _, err := CommitUCICommands(paths, mustParseUCI(t, `set tools.http_request.default_headers={"Accept":"application/json","User-Agent":"probe/2"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CommitUCICommands(paths, mustParseUCI(t, "delete tools.http_request.default_headers.User-Agent")); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = LoadWithPaths(paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"Accept": "application/json"}; len(cfg.Tools.HTTPRequest.DefaultHeaders) != 1 || cfg.Tools.HTTPRequest.DefaultHeaders["Accept"] != want["Accept"] {
+		t.Fatalf("default headers = %v, want %v", cfg.Tools.HTTPRequest.DefaultHeaders, want)
+	}
+	if _, err := CommitUCICommands(paths, mustParseUCI(t, "set tools.http_request.default_headers.Host=api.internal")); err == nil {
+		t.Fatal("a Host default header was committed")
+	}
+}

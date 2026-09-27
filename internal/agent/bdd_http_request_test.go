@@ -10,6 +10,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -23,11 +24,14 @@ import (
 	"testing"
 
 	"github.com/cucumber/godog"
+	"gopkg.in/yaml.v3"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/acp"
 	"github.com/EvilFreelancer/coddy-agent/internal/config"
 	"github.com/EvilFreelancer/coddy-agent/internal/llm"
 	"github.com/EvilFreelancer/coddy-agent/internal/session"
+	"github.com/EvilFreelancer/coddy-agent/internal/tgfake/llmstub"
+	"github.com/EvilFreelancer/coddy-agent/internal/tools"
 )
 
 // bddHTTPLogo is what the service answers for /logo.png: binary, eight bytes.
@@ -97,6 +101,9 @@ type httpRequestFeatureState struct {
 	seen   []bddHTTPSeen
 	answer string
 	callN  int
+	// browserOnly lists the paths the service serves only to a browser
+	// User-Agent, the way some hosting fronts turn tools away.
+	browserOnly map[string]bool
 }
 
 func (s *httpRequestFeatureState) reset() {
@@ -104,6 +111,7 @@ func (s *httpRequestFeatureState) reset() {
 	s.seen = nil
 	s.answer = ""
 	s.callN = 0
+	s.browserOnly = map[string]bool{}
 }
 
 func (s *httpRequestFeatureState) close() {
@@ -171,9 +179,19 @@ func (s *httpRequestFeatureState) localService() error {
 		}
 		s.mu.Lock()
 		s.seen = append(s.seen, seen)
+		browserOnly := s.browserOnly[r.URL.Path]
 		s.mu.Unlock()
 		w.Header().Set("X-Service", "echo")
 		switch {
+		case browserOnly && !strings.HasPrefix(r.UserAgent(), "Mozilla/"):
+			// What such a front answers a client it does not take for a browser:
+			// its own HTML page under a status that says nothing useful.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusUnsupportedMediaType)
+			_, _ = io.WriteString(w, "<html><body>Hosted site</body></html>")
+		case browserOnly:
+			w.Header().Set("Content-Type", "application/manifest+json")
+			_, _ = io.WriteString(w, `{"name":"Match 3","start_url":"/"}`)
 		case r.URL.Path == "/logo.png":
 			w.Header().Set("Content-Type", "image/png")
 			_, _ = w.Write(bddHTTPLogo)
@@ -216,6 +234,24 @@ func (s *httpRequestFeatureState) workspaceFile(name, content string) error {
 func (s *httpRequestFeatureState) operatorAllowlistedService() error {
 	s.cfg.Tools.HTTPRequest.Allowlist = []string{s.server.URL}
 	return nil
+}
+
+func (s *httpRequestFeatureState) serviceServesOnlyToABrowser(path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.browserOnly[path] = true
+	return nil
+}
+
+// operatorConfiguresDefaultHeaders reads the map the way config.yaml holds it
+// and runs it through the loader's own check of the tools section.
+func (s *httpRequestFeatureState) operatorConfiguresDefaultHeaders(doc *godog.DocString) error {
+	var headers map[string]string
+	if err := yaml.Unmarshal([]byte(doc.Content), &headers); err != nil {
+		return err
+	}
+	s.cfg.Tools.HTTPRequest.DefaultHeaders = headers
+	return s.cfg.Tools.Validate()
 }
 
 func (s *httpRequestFeatureState) modelCalls(doc *godog.DocString) error {
@@ -278,6 +314,17 @@ func (s *httpRequestFeatureState) serviceReceivedHeader(line string) error {
 	}
 	if got := seen.header.Get(strings.TrimSpace(name)); got != strings.TrimSpace(value) {
 		return fmt.Errorf("header %s arrived as %q, want %q", name, got, strings.TrimSpace(value))
+	}
+	return nil
+}
+
+func (s *httpRequestFeatureState) serviceReceivedNoHeader(name string) error {
+	seen, err := s.lastSeen()
+	if err != nil {
+		return err
+	}
+	if values, ok := seen.header[http.CanonicalHeaderKey(name)]; ok {
+		return fmt.Errorf("header %s arrived as %q", name, values)
 	}
 	return nil
 }
@@ -415,9 +462,12 @@ func initializeHTTPRequestScenario(sc *godog.ScenarioContext) {
 	sc.Step(`^the operator answers permission prompts with "([^"]*)"$`, s.operatorAnswers)
 	sc.Step(`^a workspace file "([^"]*)" containing "([^"]*)"$`, s.workspaceFile)
 	sc.Step(`^the operator allowlisted the service in tools\.http_request\.allowlist$`, s.operatorAllowlistedService)
+	sc.Step(`^the service serves "([^"]*)" only to a browser$`, s.serviceServesOnlyToABrowser)
+	sc.Step(`^the operator configures tools\.http_request\.default_headers:$`, s.operatorConfiguresDefaultHeaders)
 	sc.Step(`^the model calls http_request with:$`, s.modelCalls)
 	sc.Step(`^the service received "([^"]*)"$`, s.serviceReceived)
 	sc.Step(`^the service received the header "(.*)"$`, s.serviceReceivedHeader)
+	sc.Step(`^the service received no header "([^"]*)"$`, s.serviceReceivedNoHeader)
 	sc.Step(`^the service received the body "(.*)"$`, s.serviceReceivedBody)
 	sc.Step(`^the service received the form field "([^"]*)" with "([^"]*)"$`, s.serviceReceivedField)
 	sc.Step(`^the service received the file "([^"]*)" named "([^"]*)" with "([^"]*)"$`, s.serviceReceivedFile)
@@ -442,5 +492,107 @@ func TestHTTPRequestToolFeature(t *testing.T) {
 	}
 	if suite.Run() != 0 {
 		t.Fatal("http_request tool feature suite failed")
+	}
+}
+
+// bddBrowserUA is the User-Agent the default-header tests configure.
+const bddBrowserUA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+// TestHTTPRequestDefaultHeadersStayOffTheModelProvider runs one turn against a
+// model served over HTTP, the way a configured provider is reached, with
+// default headers configured: the request the model asked for carries them,
+// and not one request to the model does.
+func TestHTTPRequestDefaultHeadersStayOffTheModelProvider(t *testing.T) {
+	var serviceMu sync.Mutex
+	var serviceHeaders []http.Header
+	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serviceMu.Lock()
+		serviceHeaders = append(serviceHeaders, r.Header.Clone())
+		serviceMu.Unlock()
+		_, _ = io.WriteString(w, "ok")
+	}))
+	t.Cleanup(service.Close)
+
+	model := &llmstub.Server{Rules: []llmstub.Rule{{
+		Tool:   &llmstub.ToolCall{Name: "http_request", Arguments: json.RawMessage(`{"url":"` + service.URL + `/items"}`)},
+		Answer: "done",
+	}}}
+	var providerMu sync.Mutex
+	var providerHeaders []http.Header
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerMu.Lock()
+		providerHeaders = append(providerHeaders, r.Header.Clone())
+		providerMu.Unlock()
+		model.Handler().ServeHTTP(w, r)
+	}))
+	t.Cleanup(provider.Close)
+
+	cfg := &config.Config{
+		Providers: []config.ProviderConfig{{Name: "stub", Type: "openai", APIBase: provider.URL + "/v1", APIKey: "test"}},
+		Models:    []config.ModelEntry{{Model: "stub/coddy-demo", MaxTokens: 100}},
+		Agent:     config.Agent{Model: "stub/coddy-demo", MaxTurns: 4},
+	}
+	cfg.Tools.PermissionMode = config.PermModeBypass
+	cfg.Tools.HTTPRequest.DefaultHeaders = map[string]string{"User-Agent": bddBrowserUA, "X-Client": "coddy-lab"}
+	st := &session.State{ID: "sess_http_defaults", CWD: t.TempDir(), Mode: session.ModeAgent}
+	ag := NewAgent(cfg, st, &bddHTTPPermissionSender{answer: "allow"}, nil)
+	if _, err := ag.Run(context.Background(), []acp.ContentBlock{{Type: "text", Text: "send it"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	serviceMu.Lock()
+	defer serviceMu.Unlock()
+	if len(serviceHeaders) != 1 {
+		t.Fatalf("the service received %d requests, want the one the model asked for", len(serviceHeaders))
+	}
+	if got := serviceHeaders[0].Get("User-Agent"); got != bddBrowserUA {
+		t.Errorf("http_request sent User-Agent %q, want the configured one", got)
+	}
+	if got := serviceHeaders[0].Get("X-Client"); got != "coddy-lab" {
+		t.Errorf("http_request sent X-Client %q, want the configured one", got)
+	}
+	providerMu.Lock()
+	defer providerMu.Unlock()
+	if len(providerHeaders) < 2 {
+		t.Fatalf("the model was asked %d times, want the tool call and the answer after it", len(providerHeaders))
+	}
+	for i, h := range providerHeaders {
+		if h.Get("User-Agent") == bddBrowserUA {
+			t.Errorf("model request %d carried the configured User-Agent", i+1)
+		}
+		if v, ok := h["X-Client"]; ok {
+			t.Errorf("model request %d carried X-Client %q", i+1, v)
+		}
+	}
+}
+
+// TestHTTPRequestEnvCopiesTheSection pins what every tool environment takes
+// from tools.http_request - at the start of a turn, after a config_commit, and
+// for a call resumed after its permission prompt - and that it takes copies: a
+// reload builds a new config rather than editing the one a call is reading.
+func TestHTTPRequestEnvCopiesTheSection(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Tools.HTTPRequest = config.ToolHTTPRequest{
+		Allowlist:      []string{"api.github.com"},
+		DefaultHeaders: map[string]string{"User-Agent": bddBrowserUA},
+	}
+	env := &tools.Env{}
+	httpRequestEnv(env, cfg)
+	if len(env.HTTPAllowlist) != 1 || env.HTTPAllowlist[0] != "api.github.com" {
+		t.Errorf("allowlist = %v", env.HTTPAllowlist)
+	}
+	if env.HTTPDefaultHeaders["User-Agent"] != bddBrowserUA {
+		t.Errorf("default headers = %v", env.HTTPDefaultHeaders)
+	}
+	cfg.Tools.HTTPRequest.Allowlist[0] = "changed"
+	cfg.Tools.HTTPRequest.DefaultHeaders["User-Agent"] = "changed"
+	if env.HTTPAllowlist[0] != "api.github.com" || env.HTTPDefaultHeaders["User-Agent"] != bddBrowserUA {
+		t.Error("the environment shares the config's slices and maps instead of copying them")
+	}
+
+	st := &session.State{ID: "sess_http_resume", CWD: t.TempDir(), Mode: session.ModeAgent}
+	resumed := NewAgent(cfg, st, &bddHTTPPermissionSender{answer: "allow"}, nil).buildToolEnv(string(session.ModeAgent), "")
+	if resumed.HTTPDefaultHeaders["User-Agent"] != "changed" {
+		t.Errorf("a resumed call's environment carries default headers %v", resumed.HTTPDefaultHeaders)
 	}
 }

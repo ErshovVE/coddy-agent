@@ -354,6 +354,11 @@ tools:
   # An entry here also covers uploads and verify_tls: false for that destination; a proxy
   # needs an entry of its own, and under ask a download to a file still asks. The tool
   # refuses no address (localhost included), so bypass reaches anything the host can.
+  # default_headers go out with every request unless the call names the header itself
+  # (a call's value wins, and an empty value leaves the header out); Host, Content-Type,
+  # Content-Length, Transfer-Encoding and Proxy-Authorization are refused. They reach every destination the
+  # model sends a request to, so keep credentials out unless that is the intent.
+  # webfetch and the model providers never send them.
   # See docs/features/http-requests.md.
   # http_request:
   #   allowlist:
@@ -361,6 +366,9 @@ tools:
   #     - "*.internal.example.com"    # subdomains only
   #     - localhost:8080              # host and port
   #     - https://api.example.com/v1/ # an address prefix
+  #   default_headers:
+  #     User-Agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+  #     Accept: application/json
 
 # Subagents: child agents the model can delegate to with spawn_agent. A definition is a
 # markdown file with YAML frontmatter (name, description, model, mode, tools,

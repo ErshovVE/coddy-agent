@@ -213,6 +213,13 @@ func configSchemaType(tokens []configPathToken) (reflect.Type, error) {
 					return nil, fmt.Errorf("unknown selector field %q at %q", token.selector.field, token.key)
 				}
 			}
+		case reflect.Map:
+			// A map's keys are the operator's own (a header name, a label), so
+			// any key addresses one of its values.
+			if token.selector != nil {
+				return nil, fmt.Errorf("selectors must be attached to a sequence field")
+			}
+			typ = typ.Elem()
 		case reflect.Slice, reflect.Array:
 			if token.selector != nil {
 				return nil, fmt.Errorf("selectors must be attached to a sequence field")
@@ -515,6 +522,13 @@ func appendPath(path []string, key string) []string {
 func configSecretPath(path []string) bool {
 	if len(path) == 0 {
 		return false
+	}
+	// A default header of http_request goes to every destination the tool
+	// reaches, and nothing tells a credential among them from a User-Agent:
+	// every value is kept from the model, the way an MCP server's header
+	// values are. The names stay readable.
+	if len(path) >= 2 && strings.EqualFold(path[len(path)-2], "default_headers") {
+		return true
 	}
 	last := strings.ToLower(strings.ReplaceAll(path[len(path)-1], "-", "_"))
 	// A key for a service of its own (tools.websearch.brave_api_key) is as much a

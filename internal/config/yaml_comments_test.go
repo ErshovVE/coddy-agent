@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // documentedConfig is the shape of a hand-maintained config: a leading block with the
@@ -617,5 +620,50 @@ func TestSettingsSaveKeepsWhatAnotherSaveWroteAfterTheRead(t *testing.T) {
 	want := strings.Replace(onDisk, "dir: ${CODDY_HOME}/memory", "dir: "+filepath.Clean("/srv/memory"), 1)
 	if string(out) != want {
 		t.Errorf("saved config:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+// tools.http_request.default_headers is a map the form edits row by row. A save
+// without edits leaves it as written - the order, the quotes and a header left
+// empty on purpose - and a save that changes, removes and adds headers writes
+// exactly that, the untouched headers staying where they were.
+func TestSettingsSaveEditsTheDefaultHeaders(t *testing.T) {
+	raw := `# yaml-language-server: $schema=https://coddy.dev/config.schema.json
+tools:
+  http_request:
+    default_headers:
+      X-Client: coddy-lab
+      User-Agent: ""
+      Accept: application/json
+`
+	live, raw := settingsSaveFixture(t, raw)
+	if got := saveFromSettings(t, live, nil); got != raw {
+		t.Errorf("a save without edits rewrote the headers:\n%s\nwant:\n%s", got, raw)
+	}
+	got := saveFromSettings(t, live, func(doc map[string]any) {
+		headers, ok := object(t, object(t, doc, "tools"), "http_request")["default_headers"].(map[string]any)
+		if !ok {
+			t.Fatalf("the served document has no default_headers map: %#v", doc["tools"])
+		}
+		headers["Accept"] = "application/manifest+json"
+		delete(headers, "X-Client")
+		headers["X-Trace"] = "abc-123"
+	})
+	var saved struct {
+		Tools struct {
+			HTTPRequest struct {
+				DefaultHeaders map[string]string `yaml:"default_headers"`
+			} `yaml:"http_request"`
+		} `yaml:"tools"`
+	}
+	if err := yaml.Unmarshal([]byte(got), &saved); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"User-Agent": "", "Accept": "application/manifest+json", "X-Trace": "abc-123"}
+	if !reflect.DeepEqual(saved.Tools.HTTPRequest.DefaultHeaders, want) {
+		t.Fatalf("saved headers %v, want %v:\n%s", saved.Tools.HTTPRequest.DefaultHeaders, want, got)
+	}
+	if strings.Index(got, "User-Agent") > strings.Index(got, "Accept") {
+		t.Errorf("the save reordered the headers the form left in place:\n%s", got)
 	}
 }
