@@ -214,8 +214,8 @@ func printUsage(w io.Writer) {
   %[1]s skills add <owner/repo | git-url | marketplace-url>
   %[1]s skills sync
   %[1]s skills remove <name>
-  %[1]s plugin marketplace list | add <src> | remove <src> | sync
-  %[1]s plugin install <owner/repo | git-url | marketplace-url>
+  %[1]s plugin marketplace add <src> | list [marketplace] | update [marketplace] | remove <marketplace | src>
+  %[1]s plugin install <plugin>@<marketplace> | <owner/repo | git-url | marketplace-url>
   %[1]s plugin remove <name>
   %[1]s plugin enable <name> | disable <name>
   %[1]s mcp list | trust <name> | untrust <name> [--cwd DIR]

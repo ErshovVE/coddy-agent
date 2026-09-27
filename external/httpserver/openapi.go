@@ -2452,13 +2452,13 @@ func openAPISpec() map[string]interface{} {
 			"/coddy/skills/sync": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary":     "Sync remote skill sources",
-					"description": "Fetches every source in **`skills.sources`** (GitHub repos, git URLs, or an http(s) URL to an agents-standard **`marketplace.json`**) and materializes their skills into the managed skills directory. Manual only — never runs automatically. Returns lists of added/updated skill names and per-source failures.",
+					"description": "Fetches every source in **`skills.sources`** (GitHub repos, git URLs, or an http(s) URL to an agents-standard **`marketplace.json`**) and materializes their skills into the managed skills directory, then refreshes every marketplace added with `plugin marketplace add` and reinstalls only the plugins installed from it. Manual only — never runs automatically. Returns lists of added/updated skill names and per-source failures.",
 					"operationId": "syncSkills",
 					"parameters": []interface{}{
 						map[string]interface{}{
 							"name": "source", "in": "query", "required": false,
 							"schema":      map[string]string{"type": "string"},
-							"description": "Sync only this marketplace source; omit to sync all configured sources.",
+							"description": "Sync only this source; a marketplace added with `plugin marketplace add` refreshes only the plugins installed from it. Omit to sync everything.",
 						},
 					},
 					"responses": map[string]interface{}{
@@ -2542,7 +2542,7 @@ func openAPISpec() map[string]interface{} {
 			"/coddy/skills/available": map[string]interface{}{
 				"get": map[string]interface{}{
 					"summary":     "List installable marketplace plugins",
-					"description": "Fetches every configured marketplace manifest (network / git) and returns the plugins they advertise, each flagged with `installed`. Backs the browse/filter install control.",
+					"description": "Fetches the manifest of every configured source and of every marketplace added with `plugin marketplace add` (network / git) and returns the plugins they advertise, each flagged with `installed`. Backs the browse/filter install control.",
 					"operationId": "listAvailablePlugins",
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{"description": "Available plugins (name, description, version, source, installed)."},
@@ -2553,7 +2553,7 @@ func openAPISpec() map[string]interface{} {
 			"/coddy/skills/install": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary":     "Install one plugin from a marketplace",
-					"description": "Installs a single named plugin from a marketplace source (rather than syncing every plugin the source advertises).",
+					"description": "Installs a single named plugin from a marketplace source (rather than syncing every plugin the source advertises). Answers 400 when the plugin or the source is unknown, and when nothing could be installed (an archive refused, a plugin without skills), with the reason in the error message.",
 					"operationId": "installPlugin",
 					"requestBody": map[string]interface{}{
 						"required": true,
@@ -2579,7 +2579,7 @@ func openAPISpec() map[string]interface{} {
 			"/coddy/skills/updates": map[string]interface{}{
 				"get": map[string]interface{}{
 					"summary":     "Check installed remote skills for updates",
-					"description": "For every installed remote skill, fetches its marketplace source and compares the installed version against the latest declared upstream. Performs network / git access. Returns one entry per remote skill with **`update_available`** set when a newer version exists.",
+					"description": "For every installed remote skill, fetches its marketplace source and compares the installed version against the latest declared upstream. Performs network / git access. Returns one entry per remote skill with **`update_available`** set when a newer version exists. For a zip-archive plugin without a declared version the upstream value is the archive **`sha256`** its entry declares, and any change of it is an update.",
 					"operationId": "checkSkillUpdates",
 					"responses": map[string]interface{}{
 						"200": map[string]interface{}{
@@ -2597,7 +2597,7 @@ func openAPISpec() map[string]interface{} {
 			"/coddy/skills/{name}/update": map[string]interface{}{
 				"post": map[string]interface{}{
 					"summary":     "Update a skill to its latest version",
-					"description": "Re-syncs the marketplace source that provides **{name}**, installing whatever version that source currently declares. Fails with 400 when the skill was not installed from a remote source.",
+					"description": "Re-syncs the marketplace source that provides **{name}**, installing whatever version that source currently declares. A skill installed from a marketplace added with `plugin marketplace add` reinstalls only its own plugin, not every plugin that marketplace lists. Fails with 400 when the skill was not installed from a remote source.",
 					"operationId": "updateSkill",
 					"parameters": []interface{}{
 						map[string]interface{}{
@@ -2895,7 +2895,7 @@ func openAPISpec() map[string]interface{} {
 						"description": map[string]string{"type": "string"},
 						"file_path":   map[string]string{"type": "string"},
 						"enabled":     map[string]interface{}{"type": "boolean", "description": "False when the skill is in the disabled list."},
-						"version":     map[string]string{"type": "string", "description": "Installed version: the marketplace-declared version for synced skills, else the SKILL.md frontmatter version. Absent when unknown."},
+						"version":     map[string]string{"type": "string", "description": "Installed version: the marketplace-declared version for synced skills, else `sha256:` and the first 12 hex digits of the archive for a plugin installed from a zip archive, else the SKILL.md frontmatter version. Absent when unknown."},
 						"source":      map[string]string{"type": "string", "description": "Configured source string when the skill was installed via `skills.sources`; absent for local/bundled skills."},
 						"readonly":    map[string]interface{}{"type": "boolean", "description": "True for bundled skills, which cannot be deleted."},
 					},
@@ -2941,7 +2941,7 @@ func openAPISpec() map[string]interface{} {
 									"source":           map[string]string{"type": "string", "description": "Configured source it was installed from."},
 									"version":          map[string]string{"type": "string", "description": "Installed version."},
 									"latest":           map[string]string{"type": "string", "description": "Latest version declared by the source."},
-									"update_available": map[string]interface{}{"type": "boolean", "description": "True when latest is newer than the installed version."},
+									"update_available": map[string]interface{}{"type": "boolean", "description": "True when latest is newer than the installed version, or, when either is an archive digest (`sha256:` and 12 hex digits), different from it."},
 								},
 							},
 						},
