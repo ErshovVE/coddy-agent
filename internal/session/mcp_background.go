@@ -10,6 +10,7 @@ package session
 
 import (
 	"context"
+	"errors"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/mcp"
 )
@@ -185,6 +186,19 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 			if r.CutShort {
 				// Superseded: the reload or the teardown that cancelled the
 				// dial is what the session runs now.
+				return
+			}
+			var blocked *mcp.BlockedError
+			if errors.As(r.Err, &blocked) {
+				// The gate checks again right before the spawn, and refused:
+				// the approval was withdrawn after the dial was planned. That
+				// is a server no longer admitted, as when the withdrawal lands
+				// after the spawn (below), not one that failed.
+				if state.dropBackgroundMCPEntry(gen, i) {
+					m.log.Info("MCP server not started: not admitted any more when its dial began",
+						"server", r.Target.Server.Config.Name, "session", state.GetID())
+					signal()
+				}
 				return
 			}
 			entry := MCPServerConnect{Name: r.Target.Server.Config.Name, State: MCPConnectStateConnected}

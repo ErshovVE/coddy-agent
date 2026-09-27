@@ -1986,15 +1986,17 @@ func (s *State) settleBackgroundMCP(gen uint64, i int, entry MCPServerConnect, d
 
 // dropBackgroundMCPEntry marks a server of the dial of generation gen as
 // not installed after all: its switch went off or its approval was withdrawn
-// while it was being dialed.
-func (s *State) dropBackgroundMCPEntry(gen uint64, i int) {
+// while it was being dialed. It reports whether the dial is still the
+// current one, so the entry was changed.
+func (s *State) dropBackgroundMCPEntry(gen uint64, i int) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if gen != s.mcpClientsGen || i < 0 || i >= len(s.mcpConnect.Servers) {
-		return
+		return false
 	}
 	s.mcpConnect.Servers[i] = MCPServerConnect{Name: s.mcpConnect.Servers[i].Name, State: MCPConnectStateCancelled}
 	s.touchMCPConnectLocked()
+	return true
 }
 
 // finishBackgroundMCP installs the clients the dial of generation gen

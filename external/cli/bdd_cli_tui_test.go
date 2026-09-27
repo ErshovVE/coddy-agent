@@ -2243,15 +2243,29 @@ func (s *cliTUIState) stubTurnOfferedSameAsBefore() error {
 	return fmt.Errorf("fewer than two stub turns ran")
 }
 
-// stubTurnEnds ends the running stub turn and waits for the console to see it end.
+// stubTurnEnds ends the running stub turn and waits for the console to see it
+// end. The runner returns before the console's loop takes the end of the
+// turn, and a prompt typed in between joins the running turn's queue instead
+// of starting a turn of its own.
 func (s *cliTUIState) stubTurnEnds() error {
 	s.directives <- stubDirective{kind: "end"}
-	select {
-	case <-s.turnEnds:
-	case <-time.After(10 * time.Second):
-		return fmt.Errorf("the stub turn did not end")
+	if err := s.waitTurnEnd(10 * time.Second); err != nil {
+		return err
 	}
-	return s.waitScreen("escape interrupt", 5*time.Second)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		idle := false
+		if err := s.onLoop(time.Second, func() { idle = !s.app.turnActive && !s.app.remoteTurnActive }); err != nil {
+			return err
+		}
+		if idle {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the console still runs a turn after the stub turn ended")
+		}
+		time.Sleep(15 * time.Millisecond)
+	}
 }
 
 // workspaceHoldsProjectMCP writes a project-local .coddy/mcp.json running the
