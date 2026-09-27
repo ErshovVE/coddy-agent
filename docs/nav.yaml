@@ -18,7 +18,7 @@ groups:
         summary: From a fresh install to the first answer in five minutes, on the console, in the browser and from an editor.
       - path: getting-started/install.md
         title: Install
-        summary: One-line installers, release archives, Linux .deb and .rpm packages, Homebrew, Windows paths, manual placement.
+        summary: One-line installers, release archives, Linux .deb and .rpm packages, Homebrew, Termux on Android, Windows paths, manual placement.
       - path: getting-started/configuration.md
         title: Configuration
         summary: Where config.yaml lives, how to check it with -t and --dry-run, providers and models, SSH remote execution, the .env file.
@@ -31,6 +31,9 @@ groups:
       - path: getting-started/homebrew.md
         title: Homebrew
         summary: The cask against the formula, which Homebrew repository takes what, the homebrew/core submission.
+      - path: getting-started/android.md
+        title: Android (Termux)
+        summary: The Android build for Termux, why the Linux archive does not start there, and what Coddy adapts on the device.
       - path: getting-started/troubleshooting.md
         title: Troubleshooting
         summary: What to check when the binary is not on PATH, the config does not load, a provider rejects the key, a port is busy or a surface is missing from the build.
@@ -192,6 +195,9 @@ groups:
       - path: tutorials/swarm-remote-nodes.md
         title: Working with remote nodes
         summary: Driving a node behind a relay from the console, an editor and the browser, what runs where, and which credential opens what.
+      - path: tutorials/swarm-android-nodes.md
+        title: Android phones as swarm nodes
+        summary: A phone running Coddy in Termux joins a relay on a laptop or a server and is driven from the relay's web UI and the console, with no open port on the phone.
   - id: contributing
     title: Contributing
     summary: How Coddy is built, tested, documented and released.

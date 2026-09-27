@@ -75,9 +75,21 @@ MCP servers started over stdio get Coddy's environment plus the `env` map of the
 | `SSH_CONNECTION`, `SSH_TTY` | `external/cli/tui/terminal.go` | A lone Escape is resolved after 100 ms over SSH and 10 ms locally. | [Keyboard](keyboard.md) |
 | `COLUMNS` | `internal/skills/commands.go` | The width of the `coddy skills list` table; default 100, values under 40 are ignored. | [Skills](../features/skills.md) |
 
+## Android (Termux)
+
+Read by the Android build only (`internal/platform/android.go`, `android_init.go`), where Termux exports them. None needs setting by hand.
+
+| Variable | Read by | Meaning | Documented in |
+|---|---|---|---|
+| `TERMUX__PREFIX`, `PREFIX` | `internal/platform/android.go` | The Termux prefix, the first of the two that holds an absolute path; default `/data/data/com.termux/files/usr`. Coddy takes `etc/tls/cert.pem` and `tmp` from it, and the programs of its `bin` for a `/bin/...` or `/usr/bin/...` path. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |
+| `TERMUX_APP__DATA_DIR`, `TERMUX_APP__LEGACY_DATA_DIR` | `internal/platform/android.go` | The app data directory under both its names. A program under it is started through `/system/bin/linker64` when Coddy itself was; without the variables, the directory the prefix sits in stands for it. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |
+| `SSL_CERT_FILE` | Go's `crypto/x509` | Set to `$PREFIX/etc/tls/cert.pem` when unset and the file exists, so the Termux CA bundle is trusted next to Android's store. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |
+| `TMPDIR` | Go's `os.TempDir` | Set to `$PREFIX/tmp` when unset: Go's Android default, `/data/local/tmp`, is not writable by an app. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |
+| `TERMUX_EXEC__PROC_SELF_EXE` | the child process | Set for a program Coddy starts through the system linker to that program's path, which `/proc/self/exe` does not name then; dropped for every other child. | [Android (Termux)](../getting-started/android.md#what-coddy-adapts-on-android) |
+
 ## Docker and compose
 
-These are read by the compose files and the `Dockerfile`, not by the binary. Inside the container the image sets `CODDY_HOME=/home/user/.coddy`, `CODDY_CWD=/workspace` and `CODDY_CONFIG=/home/user/.coddy.yaml`, and `docker-compose.yml` overrides `CODDY_CONFIG` with the mounted `/home/user/.coddy/config.yaml`.
+These are read by the compose files and the `Dockerfile`, not by the binary. Inside the container the image sets `CODDY_HOME=/home/user/.coddy`, `CODDY_CWD=/workspace` and `CODDY_CONFIG=/home/user/.coddy.yaml`, and both compose files override `CODDY_CONFIG` with the mounted `/home/user/.coddy/config.yaml`.
 
 | Variable | Read by | Meaning | Documented in |
 |---|---|---|---|

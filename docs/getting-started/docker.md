@@ -57,7 +57,7 @@ Bind mounts (override host paths with env vars before **`up`**):
 
 | Host (default) | Container | Variable |
 |----------------|-------------|----------|
-| **`./config.yaml`** | **`/home/user/.coddy.yaml`** (read-only) | **`CODDY_CONFIG`** |
+| **`./config.yaml`** | **`/home/user/.coddy/config.yaml`** (read-only) | **`CODDY_CONFIG`** |
 | **`./workspace`** | **`/workspace`** | **`CODDY_CWD`** |
 | **`./coddy_home`** | **`/home/user/.coddy`** | **`CODDY_HOME`** |
 
@@ -65,7 +65,7 @@ Fixed inside the container (set by compose **`environment`**):
 
 | Variable | Value | Role |
 |----------|-------|------|
-| **`CODDY_CONFIG`** | **`/home/user/.coddy.yaml`** | Points the loader at the mounted file (not **`$CODDY_HOME/config.yaml`**) |
+| **`CODDY_CONFIG`** | **`/home/user/.coddy/config.yaml`** | Points the loader at the mounted file; the image alone sets **`/home/user/.coddy.yaml`**, outside the home volume |
 | **`CODDY_HOME`** | **`/home/user/.coddy`** | Sessions, skills, scheduler store |
 | **`CODDY_CWD`** | **`/workspace`** | Default cwd for new sessions and tool paths |
 

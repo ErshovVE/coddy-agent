@@ -305,7 +305,7 @@ memory:
   dir: "" # long-term memory root; empty = $CODDY_HOME/memory. Supports ${CODDY_HOME} and ~ when set.
   wait_seconds: 20      # how long a turn waits for the report before its first model call; 0 never waits
   timeout_seconds: 300  # hard limit of one memory run
-  keep_runs: 20         # finished memory runs kept per session in the Tasks drawer; 0 keeps all
+  keep_runs: 20         # finished memory runs kept per session in the Tasks panel; 0 keeps all
   recall_max_turns: 6   # the child's round cap is the larger of the two
   persist_max_turns: 12
   copilot_max_tokens: 4096

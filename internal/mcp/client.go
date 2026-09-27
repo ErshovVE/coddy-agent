@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/llm"
+	"github.com/EvilFreelancer/coddy-agent/internal/platform"
 )
 
 // ToolInfo describes a tool provided by an MCP server.
@@ -393,6 +394,7 @@ func newStdioTransport(_ context.Context, name, command string, args []string, e
 	procCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(procCtx, command, args...)
 	cmd.Env = append(os.Environ(), env...)
+	platform.AdaptCommand(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

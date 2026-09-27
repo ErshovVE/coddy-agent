@@ -63,6 +63,7 @@ func (r *CommandRunner) Start(spec Spec, out io.Writer) (Handle, error) {
 	cmd.Stdout = out
 	cmd.Stderr = out
 	platform.DetachProcessGroup(cmd)
+	platform.AdaptCommand(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return nil, err

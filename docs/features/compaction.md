@@ -72,7 +72,7 @@ Such a history is now folded in passes. Each pass carries the summary of everyth
 Every compaction, whichever way it started, draws the row a tool call draws: announced as `compact_context` when it begins, updated with the pass it is on while a multi-pass fold runs (`compacting context: pass 3 of 7`), and closed with what it folded. Before this the session simply went quiet for as long as the summariser took, which a fold of several calls over a large history makes hard to sit through.
 
 ![The compact_context row while a compaction runs](../assets/compaction/compact-row-running-dark-1280.png)
-*`/compact` sent from the composer: the row says what is running, above the answer of the compaction before it. Captured from the running UI.*
+*`/compact` sent from the composer: the row says the context is being compacted while the summarizer writes, under the turns it is about to fold. Captured from the running UI.*
 
 The row a compaction draws for itself is live: it reaches whoever is watching the session - the composer that sent `/compact`, a second browser tab, a console on `--remote` - and what stays in the transcript afterwards is the compaction summary row. A compaction the model asked for is different, because there the row already exists: the `compact_context` call reuses it, so the passes appear under the call that ordered them, and it stays in the transcript like any other tool call.
 

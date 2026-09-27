@@ -459,7 +459,7 @@ export const messagesEn: Record<string, string> = {
     "Hard limit of one memory run, capped by the background task pool's maximum (default 300).",
   "settings.schema.memory.keep_runs.label": "Runs kept per session",
   "settings.schema.memory.keep_runs.desc":
-    "Finished memory runs kept in the Tasks drawer per session, task record and child transcript alike; 0 keeps all (default 20).",
+    "Finished memory runs kept in the Tasks panel per session, task record and child transcript alike; 0 keeps all (default 20).",
   "settings.schema.memory.recall_max_turns.label": "Recall max turns",
   "settings.schema.memory.recall_max_turns.desc":
     "Bounds the memory subagent's rounds together with persist max turns; the cap is the larger of the two.",

@@ -2586,3 +2586,109 @@ test("files picked from the dialog survive the input being cleared before the up
   expect(next).toEqual([file]);
   vi.unstubAllGlobals();
 });
+
+// A draft emptied from outside - a send, a queued prompt - fires no change
+// event on the textarea, so the menu opened on that draft has to close by
+// itself instead of hanging over the empty composer.
+function stubCommandCatalog() {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: true,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+    onchange: null,
+  }));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string) =>
+      Promise.resolve({
+        ok: true,
+        json: async () =>
+          String(url).includes("/coddy/commands")
+            ? {
+                object: "coddy.commands",
+                items: [{ name: "compact", description: "Summarize history" }],
+              }
+            : { items: [], has_more: false, page: 1 },
+      }),
+    ),
+  );
+}
+
+function SentDraftHarness(props: {
+  generating?: boolean;
+  onSend: (text: string) => void;
+  onQueue?: (text: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  return (
+    <Composer
+      value={value}
+      isEmpty={false}
+      mode="agent"
+      modes={["agent", "plan"]}
+      onModeChange={() => {}}
+      onChange={setValue}
+      generating={props.generating ?? false}
+      onStop={() => {}}
+      queueMode="after_turn"
+      {...(props.onQueue
+        ? {
+            onQueue: (text: string) => {
+              props.onQueue?.(text);
+              setValue("");
+            },
+          }
+        : {})}
+      onSend={(text: string) => {
+        props.onSend(text);
+        setValue("");
+      }}
+    />
+  );
+}
+
+async function openCommandMenu(ta: HTMLElement, draft: string) {
+  fireEvent.change(ta, {
+    target: { value: draft, selectionStart: draft.length, selectionEnd: draft.length },
+  });
+  await waitFor(() => {
+    expect(screen.getByTestId("command-row-compact")).toBeTruthy();
+  });
+}
+
+test("Send clicked while the slash menu is open closes the menu", async () => {
+  stubCommandCatalog();
+  const onSend = vi.fn();
+  render(<SentDraftHarness onSend={onSend} />);
+  const ta = screen.getByRole("textbox", { name: "Message" });
+  await openCommandMenu(ta, "/compact");
+
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+  expect(onSend).toHaveBeenCalledWith("/compact");
+  expect((ta as HTMLTextAreaElement).value).toBe("");
+  await waitFor(() => {
+    expect(screen.queryByTestId("command-row-compact")).toBeNull();
+  });
+  vi.unstubAllGlobals();
+});
+
+test("a draft queued while the slash menu is open closes the menu", async () => {
+  stubCommandCatalog();
+  const onQueue = vi.fn();
+  render(<SentDraftHarness generating onSend={() => {}} onQueue={onQueue} />);
+  const ta = screen.getByRole("textbox", { name: "Message" });
+  await openCommandMenu(ta, "/compact");
+
+  fireEvent.click(screen.getByRole("button", { name: /queue/i }));
+
+  expect(onQueue).toHaveBeenCalledWith("/compact");
+  await waitFor(() => {
+    expect(screen.queryByTestId("command-row-compact")).toBeNull();
+  });
+  vi.unstubAllGlobals();
+});

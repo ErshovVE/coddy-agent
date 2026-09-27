@@ -91,7 +91,7 @@ That opens the interactive console: type a request, press Enter, and watch the t
 
 ![The console after a finished turn](../assets/screenshot-console-chat.png)
 
-*A finished turn in the console: the `read` tool box, the thinking block, the answer and the footer counters.*
+*A finished turn in the console: the `read` tool box, the thinking blocks, the answer, and the footer with the token and context counters, the model and the account usage of its provider.*
 
 The same agent runs without a terminal, for a script or a cron job:
 
@@ -111,15 +111,15 @@ coddy serve
 ```
 
 ```text
-coddy serve 1.1.1
+coddy serve 1.2.31
   httpserver  http://127.0.0.1:12345  (no auth)
 ```
 
-Open **http://127.0.0.1:12345/**. The empty screen is a new chat: pick a mode and a model in the composer, type, send. Sessions live under the same `~/.coddy` whichever surface created them, so the console and the browser share one history. Settings live at `#/settings`, the OpenAI-compatible API at `/v1/*` and its Swagger UI at `/docs/`.
+Open **http://127.0.0.1:12345/**. The empty screen is a new chat: pick the mode, the model, the reasoning level and the permission mode in the composer, type, send. Sessions live under the same `~/.coddy` whichever surface created them, so the console and the browser share one history. Settings live at `#/settings`, the OpenAI-compatible API at `/v1/*` and its Swagger UI at `/docs/`.
 
 ![A session in the web UI](../assets/screenshot-fullhd-chat.png)
 
-*A session in the web UI, with an expanded `edit` tool call showing the diff it applied.*
+*A session in the web UI, with an expanded "editing a file" row showing the diff it applied.*
 
 The server binds loopback on purpose. To reach it from another machine, bind wider and require a token: `coddy serve -H 0.0.0.0 --auth-token <secret>` (or `httpserver.host` and `httpserver.auth_token` in the file). `coddy serve --daemon` keeps it running in the background and `coddy serve status | stop | restart` control it; see [coddy serve and the daemon](../operate/serve.md).
 

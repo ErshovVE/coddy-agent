@@ -13,6 +13,12 @@ Feature: Coddy self-update
     Then the installed executable is the one from the release
     And Coddy reports the release it installed
 
+  Scenario: Installing the Android build on Android
+    Given a newer Coddy release with Linux and Android builds for arm64 is available
+    When Coddy installs the update
+    Then the installed executable is the one from the release
+    And Coddy downloads the Android archive
+
   Scenario: Verifying the download against the published checksums
     Given a newer Coddy release is available
     When Coddy installs the update

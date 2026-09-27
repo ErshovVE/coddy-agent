@@ -1072,7 +1072,7 @@
             "integer",
             "null"
           ],
-          "description": "How long a user turn waits for the memory subagent's report before its first model call. An explicit 0 never waits: the report then reaches the turn only through a later step, or stays in the Tasks drawer.",
+          "description": "How long a user turn waits for the memory subagent's report before its first model call. An explicit 0 never waits: the report then reaches the turn only through a later step, or stays in the Tasks panel.",
           "default": 20
         },
         "timeout_seconds": {
