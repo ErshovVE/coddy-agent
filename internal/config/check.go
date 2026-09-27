@@ -467,10 +467,13 @@ func syntaxFix(msg string) string {
 	}
 }
 
+// The patterns that find the config paths a loader message names. Below the
+// top level a key of pathTokenRE may carry hyphens: it can be the operator's
+// own key of a map, such as a header of tools.http_request.default_headers.
 var (
 	quotedRE      = regexp.MustCompile(`"([^"]+)"`)
 	leadingPathRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?(?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?)*):`)
-	pathTokenRE   = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?(?:\.[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?)*`)
+	pathTokenRE   = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?(?:\.[A-Za-z_][A-Za-z0-9_-]*(?:\[[^\]]*\])?)*`)
 	selectorRE    = regexp.MustCompile(`\[[^\]]*\]`)
 )
 
@@ -504,7 +507,7 @@ func loaderFinding(err error, body *yaml.Node, cfg *Config) Finding {
 	}
 	if root, err := loadSchema(); err == nil {
 		for _, p := range paths {
-			if s := root.lookup(selectorRE.ReplaceAllString(p, "")); s != nil {
+			if s := root.lookupEntry(selectorRE.ReplaceAllString(p, "")); s != nil {
 				f.Doc = s.doc()
 				break
 			}

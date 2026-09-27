@@ -20,14 +20,32 @@ flag-style shortcuts routed to the console: `coddy -c` continues the latest
 session in this folder and `coddy -p "..."` runs one non-interactive prompt
 (`coddy -p -` and `coddy -i FILE` read it from stdin or from a file).
 Startup runs before the terminal enters raw mode: the config, the session
-store, the skills, the rule folders and the configured MCP servers, then
-the first frame. Nothing reads the workspace tree: nested `AGENTS.md` files
-are read on demand, from the folders a tool enters (`docs/features/rules.md`), so a
-console opened in a home directory (a macOS `~/Library` alone runs to
-hundreds of thousands of entries) draws its frame at once instead of
-looking hung. The git branch in the footer is read with a three-second
-bound for the same reason. A first ctrl+c during startup cancels it; a
-second one ends the process the default way instead of being swallowed.
+store, the skills and the rule folders, then the first frame. The skills are
+read from their folders only, never from `skills.sources`, so hundreds of
+installed skills cost a fraction of a second and a marketplace that does not
+answer costs nothing ([Skills](../features/skills.md#when-skills-are-read)).
+The configured MCP servers are **not** on that path, whatever starts them - a
+program the config names, an npm package run through `npx`, a remote server
+over streamable HTTP or SSE: they connect in the background once the console
+has drawn, for a new session and for one resumed with `coddy -c` or
+`/resume` alike, all at once and each under a 20-second bound, and the
+footer counts them (`MCP 2/5`) until every one has answered. A prompt sent
+before that waits for its tool list on the status line (`Connecting MCP
+servers`), and Escape ends the wait like any other step. A server that fails
+or that the trust gate holds is said once as a row of the visible transcript,
+with what to do about it. A server that did not answer in time is tried
+once more at the next prompt - the first start of an `npx` package can
+outlast the bound while the package installs - and one that failed
+otherwise, or twice, is not dialed again until its switch in `/mcp`, a
+reload or a new session. Resuming a
+session restores its current MCP notices after the transcript is cleared.
+Nothing reads the workspace tree: nested `AGENTS.md` files are read on demand, from the folders
+a tool enters (`docs/features/rules.md`), so a console opened in a home
+directory (a macOS `~/Library` alone runs to hundreds of thousands of
+entries) draws its frame at once instead of looking hung. The git branch in
+the footer is read with a three-second bound for the same reason. A first
+ctrl+c during startup cancels it; a second one ends the process the default
+way instead of being swallowed.
 
 Quitting the console (double ctrl+c, ctrl+d, `/quit`) prints a resume hint
 after the terminal is restored:
@@ -110,7 +128,9 @@ Top to bottom:
   background tasks run right now - `15m 08s · 13.5k tokens · 1 running task ·
   Thinking…`. Before the first token it is the clock and the phrase alone
   (`57s · Waiting for the model`), and the tasks appear only while something
-  runs. The tokens are the agent's `turn_progress` update: the provider's
+  runs. A prompt sent while the session's configured MCP servers are still
+  connecting opens on `Connecting MCP servers` instead, with a counter of
+  its own, and goes back to waiting for the model when they have answered. The tokens are the agent's `turn_progress` update: the provider's
   figures for the calls that finished plus an estimate of the one in flight, so
   the count moves while the answer streams; a console attached over `--remote`
   receives the same update. Then comes the phrase of the current step and, for a
@@ -150,7 +170,7 @@ Top to bottom:
   `@Dockerfile:21-31` or `@f.go#L21-31`, absolute paths included. In remote mode the
   list comes from the server that runs the session. The grammar, what each kind
   attaches and the limits are in [Mentions](../features/mentions.md).
-- **Footer**: dim `cwd (git-branch) • title [• plan] [• N tasks running (/tasks)] [• accept edits|bypass]`,
+- **Footer**: dim `cwd (git-branch) • title [• plan] [• MCP N/M] [• N tasks running (/tasks)] [• accept edits|bypass]`,
   then `↑in ↓out  N.N%/ctx (auto)` left and `(provider) model [• reasoning]`
   right. The permission mode closes the first line when it is not `ask`,
   `bypass` in the warning colour, so a session that approves everything never
@@ -159,8 +179,12 @@ Top to bottom:
   session entered. A setting changed for a number of turns adds a line
   in the accent colour under the second one, `next turn: model x • next 3
   turns: reasoning high` (`this turn` while the running turn holds it). The running-task note stays after the turn that started the tasks has
-  ended, which is when the status line that counted them is gone. When the
-  line does not fit, the path and the title give way and the note stays.
+  ended, which is when the status line that counted them is gone. The MCP
+  count is there only while a configured server is still connecting after
+  the first frame - connected out of the ones being dialed, a held project
+  declaration not counted - and leaves the line once every one has
+  answered. When the line does not fit, the path and the title give way and
+  the notes stay.
   A third line appears while the active model's provider reports account
   usage (today: `neuraldeep`, read from the hub's `GET /v1/limits`; `codex`,
   read from the Codex backend's usage endpoint; `devin`, read from the
@@ -761,6 +785,14 @@ and is visible via `coddy mcp list` (approve with `coddy mcp trust <name>`).
 
 *The ctrl+l model selector*
 
+![The first frame with the MCP count in the footer while a server is still connecting](../assets/cli-tui/21-mcp-connecting.png)
+
+*The first frame: the console is drawn and takes keys while its MCP servers connect, and the footer counts them (`MCP 1/2`)*
+
+![A prompt sent before the servers answered: the status line reads Connecting MCP servers](../assets/cli-tui/22-mcp-connecting-turn.png)
+
+*A prompt sent before the servers answered waits for its tool list on the status line*
+
 ![The usage footer with the account windows](../assets/cli-tui/09-usage-footer.png)
 
 *The usage footer with the account windows*
@@ -856,10 +888,35 @@ comparison, as described under **Visual model**.
 - Real pty, no model: `examples/cli/cli_e2e_startup.py` opens the built
   binary in a pty (pexpect + pyte), waits for the first frame, types into the
   editor, clears it with ctrl+c and exits with the second one, then checks the
-  resume hint and the exit status. CI runs it in the `cli` job of the Linux test
+  resume hint and the exit status; a second case configures a stdio MCP
+  server that never answers (`sleep 600`) and checks that the first frame
+  still comes within seconds, with `MCP 0/1` in the footer, and that the
+  console still leaves through double ctrl+c; a third one adds 300 installed
+  skills and a `skills.sources` entry that accepts connections and never
+  answers (issue #319), and checks that the first frame comes within two
+  seconds, that a typed key is echoed and that the source was never
+  contacted. Those two are the startup bounds CI enforces. The performance of the startup itself is
+  measured, not gated: `make bench-cli-startup` times the first frame and a
+  typed probe's echo across skill sets in the same pty, and
+  `make bench-cli-startup-real` does it on a private copy of the operator's
+  `~/.coddy`, MCP servers included, reporting when every server settled and
+  which failed (`docs/plans/console-mcp-startup.md` keeps the numbers a
+  change cited). CI runs it in the `cli` job of the Linux test
   matrix and on `macos-latest` (job `test-macos`, which also runs the platform packages and
   the console suite on macOS), because the Go suite never opens a pty and the
   console's terminal path is exactly what differs between hosts.
+- MCP servers of every kind on a real pty: `examples/cli/cli_e2e_mcp_servers.py`
+  configures a native program (compiled from Go by the script and run by its
+  path), an npm package started through the real `npx -y` from a local
+  folder (no registry is asked), a remote server over streamable HTTP and one
+  over SSE, and serves a scripted model that calls the tool of each in turn.
+  It checks the first frame, the four tokens in the answer, what the model
+  received from each server, and the four servers listed as connected in
+  `/mcp`. It needs `go` and `npx` on `PATH`; CI runs it in the `cli` job of
+  the Linux test matrix. `features/cli_tui.feature` holds the same story in
+  the Go suite for a program, streamable HTTP and SSE, and
+  `features/mcp_tool_calls.feature` runs every kind, `npx` included, through
+  a real ReAct turn of the HTTP surface.
 - Message queue on a real pty, no model: `examples/cli/cli_e2e_queue.py`
   serves a scripted model whose first answer waits for the script, and checks
   the first-use question and the saved `agent.queue_mode`, Tab queueing the
