@@ -230,7 +230,7 @@ func TestReloadDuringPendingConnectLeavesNoDuplicates(t *testing.T) {
 	next := reloadTestConfig(gatedMCPServer("gated", f.started, f.release), reloadTestMCPServer("good"))
 	f.mgr.ReplaceConfig(next)
 	f.releaseServer()
-	if !waitUntil(t, 10*time.Second, func() bool { s, _ := f.st.MCPConnectSnapshot(); return s.Done }) {
+	if !waitUntil(t, 10*time.Second, func() bool { return !f.st.backgroundMCPRunning() }) {
 		t.Fatal("the superseded dial never settled")
 	}
 	time.Sleep(200 * time.Millisecond) // a late install would land here
@@ -247,6 +247,23 @@ func TestReloadDuringPendingConnectLeavesNoDuplicates(t *testing.T) {
 	if seen["good"] != 1 {
 		t.Fatalf("clients = %v, want the reloaded server good", names)
 	}
+}
+
+// TestReloadDuringPendingConnectTellsTheSurface: a reload that supersedes a
+// background connect sends the surface a last snapshot of that connect,
+// done, with the server it cut short marked cancelled rather than failed -
+// otherwise the console's footer would count a server nobody dials any more.
+func TestReloadDuringPendingConnectTellsTheSurface(t *testing.T) {
+	f := newBackgroundFixture(t, nil, func(m *Manager) { m.SetMCPConnectTimeoutForTest(300 * time.Millisecond) })
+	f.mgr.ReplaceConfig(reloadTestConfig(reloadTestMCPServer("good")))
+	last, ok := f.sender.last()
+	if !ok || !last.Done {
+		t.Fatalf("last control update = %+v (%v), want a done snapshot", last, ok)
+	}
+	if len(last.Servers) != 1 || last.Servers[0].State != MCPConnectStateCancelled {
+		t.Fatalf("servers = %+v, want the gated server cancelled", last.Servers)
+	}
+	f.releaseServer()
 }
 
 // TestCloseAllUnblocksWait: tearing the session down releases a turn waiting
@@ -333,18 +350,23 @@ func TestHeldServerIsReportedNotDialed(t *testing.T) {
 	}
 }
 
-// TestSnapshotGenerationMovesWithTheDial: a superseded dial's snapshot is
-// older than the replacement's, which is what lets a surface drop it.
-func TestSnapshotGenerationMovesWithTheDial(t *testing.T) {
+// TestReloadClearsTheConnectRecord: once a reload has replaced the servers,
+// the record of the background connect no longer describes the session and
+// is gone, so a surface adopting the session later shows no stale notice;
+// the last snapshot the surface got is of the connect it was following.
+func TestReloadClearsTheConnectRecord(t *testing.T) {
 	f := newBackgroundFixture(t, nil, func(m *Manager) { m.SetMCPConnectTimeoutForTest(300 * time.Millisecond) })
 	first, _ := f.st.MCPConnectSnapshot()
 	if first.Generation == 0 {
 		t.Fatal("the first snapshot carries no generation")
 	}
 	f.mgr.ReplaceConfig(reloadTestConfig(reloadTestMCPServer("good")))
-	after, _ := f.st.MCPConnectSnapshot()
-	if after.Generation <= first.Generation {
-		t.Fatalf("generation after the reload = %d, want above %d", after.Generation, first.Generation)
+	if _, recorded := f.st.MCPConnectSnapshot(); recorded {
+		t.Fatal("the connect record outlived the reload that replaced the servers")
+	}
+	last, _ := f.sender.last()
+	if !last.Done || last.Generation != first.Generation {
+		t.Fatalf("last update = %+v, want the followed connect (generation %d) done", last, first.Generation)
 	}
 	f.releaseServer()
 }
@@ -401,5 +423,63 @@ func TestApprovedProjectServerConnectsInTheBackground(t *testing.T) {
 	}
 	if _, err := os.Stat(started); err != nil {
 		t.Fatal("the approved server was never spawned")
+	}
+}
+
+// TestRevokedWhileConnectingIsNotInstalled: a project server whose approval
+// is withdrawn while the background connect dials it is not installed when
+// it answers, and the record shows it cancelled rather than connected.
+func TestRevokedWhileConnectingIsNotInstalled(t *testing.T) {
+	cwd, home, dir := t.TempDir(), t.TempDir(), t.TempDir()
+	release := filepath.Join(dir, "release")
+	entry := config.MCPJSONServer{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=^TestGatedMCPHelperProcess$"},
+		Env: map[string]string{
+			reloadTestMCPHelperEnv: "1",
+			gatedMCPStartedEnv:     filepath.Join(dir, "started"),
+			gatedMCPReleaseEnv:     release,
+		},
+	}
+	if err := config.UpsertMCPJSONServer(config.MCPJSONPath(cwd), "project-tool", entry); err != nil {
+		t.Fatal(err)
+	}
+	cfg := reloadTestConfig()
+	cfg.MCP.ProjectTrust = config.ProjectTrustAsk
+	cfg.Paths.Home = home
+	servers, err := mcp.ListManagedServers(cfg, cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, srv := range servers {
+		if srv.Config.Name == "project-tool" {
+			if err := mcp.NewTrustStore(home).Approve(cwd, config.MCPJSONPath(cwd), srv.Config); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	mgr := NewManager(cfg, &controlCapture{}, nil, slog.Default(), cwd, nil)
+	mgr.SetBackgroundMCPConnect(true)
+	res, err := mgr.HandleSessionNew(context.Background(), acp.SessionNewParams{CWD: cwd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := mgr.SessionByID(res.SessionID)
+	t.Cleanup(st.CloseAll)
+	if _, err := mcp.NewTrustStore(home).Revoke(cwd, "project-tool"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(release, []byte("1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !waitUntil(t, 10*time.Second, func() bool { return !st.backgroundMCPRunning() }) {
+		t.Fatal("the dial never settled")
+	}
+	if names := clientNames(st); len(names) != 0 {
+		t.Fatalf("clients = %v, want none: the approval was withdrawn while the server connected", names)
+	}
+	snap, _ := st.MCPConnectSnapshot()
+	if len(snap.Servers) != 1 || snap.Servers[0].State != MCPConnectStateCancelled {
+		t.Fatalf("snapshot = %+v, want the server cancelled", snap.Servers)
 	}
 }

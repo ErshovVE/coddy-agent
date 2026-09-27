@@ -77,6 +77,12 @@ func (p *mcpKindsProvider) Complete(ctx context.Context, messages []llm.Message,
 }
 
 func (p *mcpKindsProvider) Stream(_ context.Context, messages []llm.Message, tools []llm.ToolDefinition, onChunk func(llm.StreamChunk)) (*llm.Response, error) {
+	if len(tools) == 0 {
+		// A request with nothing to call (a title, a summary) is not the
+		// turn this model plays: it answers in words and records nothing.
+		onChunk(llm.StreamChunk{TextDelta: "Ready."})
+		return &llm.Response{Content: "Ready.", StopReason: "end_turn"}, nil
+	}
 	results := map[string]string{}
 	for _, m := range messages {
 		if m.Role == llm.RoleTool && strings.HasPrefix(m.ToolCallID, mcpKindsCallPrefix) {
@@ -148,7 +154,10 @@ func (s *mcpE2EState) scriptedModelCallsEveryTool() error {
 // MCP servers sends. It runs the real npx.
 func (s *mcpE2EState) registerNPXServer(name string) error {
 	if _, err := exec.LookPath("npx"); err != nil {
-		return fmt.Errorf("this scenario starts a server through the real npx, which comes with Node.js: %w", err)
+		// The scenario runs the real npx, which comes with Node.js; CI sets
+		// Node up for it, and a checkout without Node skips the scenario
+		// rather than failing a suite that does not otherwise need it.
+		return godog.ErrSkip
 	}
 	srv, err := mcptest.NPX(name, mcpKindsTokens[name], filepath.Join(s.root, "npx"))
 	if err != nil {

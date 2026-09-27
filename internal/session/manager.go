@@ -208,13 +208,17 @@ func (m *Manager) RefreshMCPServer(ctx context.Context, name string) {
 	m.mu.RUnlock()
 	var wg sync.WaitGroup
 	for _, st := range states {
-		// The switch or the trust changed: the server gets a fresh dial,
-		// whatever it did before.
-		st.clearMCPNoAnswer(name)
 		st.markMCPServerPending(name)
 		wg.Add(1)
 		go func(st *State) {
 			defer wg.Done()
+			// The switch or the trust changed: the server gets a fresh dial,
+			// whatever it did before. The record is cleared once a
+			// background connect still running has settled, since that
+			// connect may yet record the old declaration as not answering.
+			if st.WaitMCPConnect(ctx) == nil {
+				st.clearMCPNoAnswer(name)
+			}
 			m.reconcileParkedWhileIdle(ctx, st)
 		}(st)
 	}
@@ -1086,7 +1090,7 @@ func (m *Manager) beginTurn(ctx context.Context, sessionID string, state *State,
 	// and before the model is handed its tools. Work that is not a prompt (a
 	// compaction) calls no tool and starts nothing.
 	if !adm.noQueue {
-		m.bringInTurnMCPServers(ctx, turnCtx, state)
+		m.bringInTurnMCPServers(turnCtx, state)
 	}
 	if hook := m.testHooks.beforeTurnAdmissionRecheck; hook != nil {
 		hook(sessionID)
@@ -1621,10 +1625,10 @@ func (m *Manager) startConfiguredMCPServers(ctx context.Context, state *State) {
 	results, _ := m.dialConfigured(dialCtx, m.activeCfg(), state.GetCWD())
 	for _, r := range results {
 		name := r.Target.Server.Config.Name
-		if r.Err != nil && dialCtx.Err() != nil {
+		if r.CutShort {
 			state.markMCPServerPending(name)
-			m.log.Warn("MCP server did not start before its deadline; the session's next turn tries it again",
-				"server", name, "session", state.GetID())
+			m.log.Warn("MCP server dial was cut short; the session's next turn tries it again",
+				"server", name, "session", state.GetID(), "error", dialCtx.Err())
 			continue
 		}
 		m.noteConfiguredDial(state, name, r.Err)
@@ -1645,17 +1649,18 @@ func (m *Manager) connectDeferredMCPServers(ctx context.Context, state *State) {
 }
 
 // bringInTurnMCPServers brings in the MCP servers a turn is about to be
-// handed, under its turn lock. First it waits for a background connect still
-// running: the console connects a session's configured servers after its
-// first frame, and the tool list is fixed when the turn starts, so a prompt
-// sent before the servers answered waits for them, bounded by the per-server
-// timeout. The wait runs on turnCtx, so Stop ends it like any other step of
-// the turn, and the turn then goes on to the runner with its cancelled
-// context, which reports it as stopped. Then it dials the servers a switch
-// parked on the session and, for a session restored from disk, all of its
-// configured servers, on the admission's ctx.
-func (m *Manager) bringInTurnMCPServers(ctx, turnCtx context.Context, state *State) {
-	if state.WaitMCPConnect(turnCtx) != nil {
+// handed, under its turn lock and on the turn's own context, so Stop ends
+// any of it like any other step of the turn; the turn then goes on to the
+// runner with its cancelled context, which reports it as stopped, and what
+// was cut short stays parked for the next turn. First it waits for a
+// background connect still running: the console connects a session's
+// configured servers after its first frame, and the tool list is fixed when
+// the turn starts, so a prompt sent before the servers answered waits for
+// them, bounded by the per-server timeout. Then it dials the servers a switch
+// parked on the session, the ones that did not answer in time at their last
+// dial, and, for a session restored from disk, all of its configured servers.
+func (m *Manager) bringInTurnMCPServers(ctx context.Context, state *State) {
+	if state.WaitMCPConnect(ctx) != nil {
 		return
 	}
 	m.applyParkedMCPServers(ctx, state)
@@ -1893,11 +1898,16 @@ func (m *Manager) reconcileConfiguredMCPServer(ctx context.Context, st *State, g
 	}
 	if err != nil {
 		m.log.Warn("failed to connect MCP server", "server", name, "session", st.GetID(), "error", err)
-		m.noteConfiguredDial(st, name, err)
+		entry := MCPServerConnect{Name: name, State: MCPConnectStateFailed, Error: err.Error()}
+		if m.noteConfiguredDial(st, name, err) {
+			entry.Hint = mcpRetryHint
+		}
+		st.updateBackgroundMCPEntry(entry)
 		return
 	}
 	m.noteConfiguredDial(st, name, nil)
 	st.addConfiguredMCPClient(client)
+	st.updateBackgroundMCPEntry(MCPServerConnect{Name: name, State: MCPConnectStateConnected, Tools: len(client.Tools())})
 	m.log.Info("connected MCP server", "name", name, "session", st.GetID(),
 		"transport", mcp.EffectiveTransport(want.Config), "tools", len(client.Tools()))
 }

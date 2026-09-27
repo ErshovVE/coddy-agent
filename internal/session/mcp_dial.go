@@ -46,18 +46,23 @@ type mcpDialTarget struct {
 	Connect func(ctx context.Context) (*mcp.Client, error)
 }
 
-// mcpDialResult is what one target's dial ended with.
+// mcpDialResult is what one target's dial ended with. CutShort says the
+// caller's ctx had ended by the time the dial returned with an error: the
+// server was not given its chance, as opposed to failing on its own.
 type mcpDialResult struct {
-	Target mcpDialTarget
-	Client *mcp.Client
-	Err    error
+	Target   mcpDialTarget
+	Client   *mcp.Client
+	Err      error
+	CutShort bool
 }
 
 // mcpHeldServer is a configured server the trust gate refused to start: a
-// project declaration the operator has not approved for this workspace.
+// project declaration the operator has not approved for this workspace
+// (Blocked), or one the gate could not decide on (Err).
 type mcpHeldServer struct {
 	Server  mcp.ManagedServer
 	Blocked *mcp.BlockedError
+	Err     error
 }
 
 // connectTimeout is the per-server dial budget; tests shorten it.
@@ -95,10 +100,10 @@ func (m *Manager) configuredTargets(cfg *config.Config, cwd string) ([]mcpDialTa
 		if err := gate.Check(cwd, srv); err != nil {
 			var blocked *mcp.BlockedError
 			if errors.As(err, &blocked) {
-				held = append(held, mcpHeldServer{Server: srv, Blocked: blocked})
+				held = append(held, mcpHeldServer{Server: srv, Blocked: blocked, Err: err})
 				continue
 			}
-			held = append(held, mcpHeldServer{Server: srv})
+			held = append(held, mcpHeldServer{Server: srv, Err: err})
 			continue
 		}
 		targets = append(targets, m.configuredTarget(gate, srv, cwd))
@@ -111,12 +116,25 @@ func (m *Manager) configuredTargets(cfg *config.Config, cwd string) ([]mcpDialTa
 // bound in the message; the caller's ctx ending is reported as that ctx's
 // error, so a caller can tell a dial it cut short from a server that failed.
 func (m *Manager) dialOne(ctx context.Context, target mcpDialTarget) (*mcp.Client, error) {
+	// An expired budget starts nothing: a process spawned now would only be
+	// thrown away.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	timeout := m.connectTimeout()
 	srvCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	client, err := target.Connect(srvCtx)
-	if err != nil && ctx.Err() == nil && errors.Is(srvCtx.Err(), context.DeadlineExceeded) {
-		err = fmt.Errorf("%w within %s: %w", errMCPNoAnswer, timeout, err)
+	if err != nil {
+		// A dial that failed owns nothing: whatever it half opened is closed
+		// here, so no caller can leave a process behind.
+		if client != nil {
+			_ = client.Close()
+			client = nil
+		}
+		if ctx.Err() == nil && errors.Is(srvCtx.Err(), context.DeadlineExceeded) {
+			err = fmt.Errorf("%w within %s: %w", errMCPNoAnswer, timeout, err)
+		}
 	}
 	return client, err
 }
@@ -130,22 +148,22 @@ func (m *Manager) dialOne(ctx context.Context, target mcpDialTarget) (*mcp.Clien
 // answers must not cost every turn its bound. It reports whether the server
 // was kept for that try.
 func (m *Manager) noteConfiguredDial(st *State, name string, err error) bool {
-	if err == nil {
-		st.clearMCPNoAnswer(name)
-		return false
-	}
-	if !errors.Is(err, errMCPNoAnswer) {
-		return false
-	}
-	if !st.noteMCPNoAnswer(name) {
+	retry, gaveUp := st.recordMCPDial(name, err)
+	m.logNoAnswer(st, name, retry, gaveUp)
+	return retry
+}
+
+// logNoAnswer says what the record of servers that did not answer in time
+// made of one dial.
+func (m *Manager) logNoAnswer(st *State, name string, retry, gaveUp bool) {
+	switch {
+	case retry:
+		m.log.Warn("MCP server did not answer in time; the session's next turn tries it once more",
+			"server", name, "session", st.GetID())
+	case gaveUp:
 		m.log.Warn("MCP server did not answer in time again; it stays down until a reload, its switch or a new session",
 			"server", name, "session", st.GetID())
-		return false
 	}
-	st.markMCPServerRetry(name)
-	m.log.Warn("MCP server did not answer in time; the session's next turn tries it once more",
-		"server", name, "session", st.GetID())
-	return true
 }
 
 // dialConcurrently connects every target at once, each under its own copy of
@@ -166,7 +184,7 @@ func (m *Manager) dialConcurrently(ctx context.Context, targets []mcpDialTarget,
 		results[i].Target = target
 		if err := ctx.Err(); err != nil {
 			mu.Lock()
-			results[i].Err = err
+			results[i].Err, results[i].CutShort = err, true
 			if settled != nil {
 				settled(i, results[i])
 			}
@@ -177,8 +195,12 @@ func (m *Manager) dialConcurrently(ctx context.Context, targets []mcpDialTarget,
 		go func(i int, target mcpDialTarget) {
 			defer wg.Done()
 			client, err := m.dialOne(ctx, target)
+			// Read now, not after every dial is back: a server that failed
+			// on its own before the caller's ctx ended did not run out of
+			// the caller's time.
+			cutShort := err != nil && ctx.Err() != nil
 			mu.Lock()
-			results[i].Client, results[i].Err = client, err
+			results[i].Client, results[i].Err, results[i].CutShort = client, err, cutShort
 			r := results[i]
 			if settled != nil {
 				settled(i, r)
@@ -198,7 +220,7 @@ func (m *Manager) logHeld(cwd string, h mcpHeldServer) {
 			"digest", h.Blocked.Digest, "approve_with", "coddy mcp trust "+h.Server.Config.Name)
 		return
 	}
-	m.log.Warn("MCP server not started", "server", h.Server.Config.Name, "workspace", cwd)
+	m.log.Warn("MCP server not started", "server", h.Server.Config.Name, "workspace", cwd, "error", h.Err)
 }
 
 // logDial says how one configured server's dial ended.
@@ -231,7 +253,7 @@ func (m *Manager) dialConfigured(ctx context.Context, cfg *config.Config, cwd st
 	}
 	results := m.dialConcurrently(ctx, targets, nil)
 	for _, r := range results {
-		if r.Err != nil && ctx.Err() != nil {
+		if r.CutShort {
 			continue
 		}
 		m.logDial(r)
@@ -255,8 +277,8 @@ func connectedClients(results []mcpDialResult) []*mcp.Client {
 func dialWarnings(results []mcpDialResult, held []mcpHeldServer) []string {
 	var warnings []string
 	for _, h := range held {
-		if h.Blocked != nil {
-			warnings = append(warnings, fmt.Sprintf("connect MCP %s: %v", h.Server.Config.Name, h.Blocked))
+		if h.Err != nil {
+			warnings = append(warnings, fmt.Sprintf("connect MCP %s: %v", h.Server.Config.Name, h.Err))
 		}
 	}
 	for _, r := range results {

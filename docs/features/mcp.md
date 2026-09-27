@@ -367,7 +367,9 @@ mcp_servers:
 1. On `session/new`, the agent connects every enabled server from the merged
    config.yaml + `~/.coddy/mcp.json` + `./.coddy/mcp.json` list that the workspace
    trust gate admits, then any ACP client-supplied servers. The servers are
-   dialed **concurrently**, each under its own 20-second bound: the call costs
+   dialed **concurrently**, each under its own 20-second bound - the servers
+   an ACP client sends too, which get no second try since only that client
+   can declare them again (a new session does): the call costs
    the slowest server rather than the sum of them, and a server that starts
    and never answers `initialize` - a stdio command as much as a remote URL
    that accepts the connection and stays silent - fails alone, with a

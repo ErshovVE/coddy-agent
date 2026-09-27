@@ -3,6 +3,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -559,6 +560,11 @@ func (s *State) replaceConfiguredMCPClients(clients []*mcp.Client) {
 		return
 	}
 	s.cancelBackgroundMCPLocked()
+	// The record of the background connect no longer describes what the
+	// session runs: a surface that adopts the session from now on shows no
+	// connect notices rather than stale ones.
+	s.mcpConnectRecorded = false
+	s.mcpConnect = MCPConnectUpdate{}
 	previous := s.configuredMCPClients
 	s.configuredMCPClients = append([]*mcp.Client(nil), clients...)
 	s.mu.Unlock()
@@ -650,23 +656,39 @@ func (s *State) takeMCPServersPending() []string {
 	return names
 }
 
-// noteMCPNoAnswer records that the configured server name did not answer in
-// time and reports whether that is news: true the first time, so the caller
-// gives the server one more try, false once it has had it.
-func (s *State) noteMCPNoAnswer(name string) bool {
+// recordMCPDial keeps the record of the configured servers that did not
+// answer in time after one of them was dialed (Manager.noteConfiguredDial):
+// an answer clears the server, and a dial that ended in errMCPNoAnswer keeps
+// it for one more try the first time (retry) and gives up the second
+// (gaveUp). Any other failure leaves the record as it is.
+func (s *State) recordMCPDial(name string, err error) (retry, gaveUp bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.mcpClosed {
-		return false
+	return s.recordMCPDialLocked(name, err)
+}
+
+// recordMCPDialLocked is recordMCPDial for a caller that holds s.mu.
+func (s *State) recordMCPDialLocked(name string, err error) (retry, gaveUp bool) {
+	if err == nil {
+		delete(s.mcpNoAnswer, name)
+		delete(s.mcpServersRetry, name)
+		return false, false
+	}
+	if !errors.Is(err, errMCPNoAnswer) || s.mcpClosed {
+		return false, false
 	}
 	if _, seen := s.mcpNoAnswer[name]; seen {
-		return false
+		return false, true
 	}
 	if s.mcpNoAnswer == nil {
 		s.mcpNoAnswer = make(map[string]struct{})
 	}
+	if s.mcpServersRetry == nil {
+		s.mcpServersRetry = make(map[string]struct{})
+	}
 	s.mcpNoAnswer[name] = struct{}{}
-	return true
+	s.mcpServersRetry[name] = struct{}{}
+	return true, false
 }
 
 // clearMCPNoAnswer forgets that the server did not answer in time: it
@@ -686,20 +708,6 @@ func (s *State) resetMCPNoAnswer() {
 	defer s.mu.Unlock()
 	s.mcpNoAnswer = nil
 	s.mcpServersRetry = nil
-}
-
-// markMCPServerRetry keeps a configured server that did not answer in time
-// for its one more try at the start of the session's next turn.
-func (s *State) markMCPServerRetry(name string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.mcpClosed {
-		return
-	}
-	if s.mcpServersRetry == nil {
-		s.mcpServersRetry = make(map[string]struct{})
-	}
-	s.mcpServersRetry[name] = struct{}{}
 }
 
 // moveMCPRetriesToPending hands the servers waiting for their one more try
@@ -1942,7 +1950,7 @@ func (s *State) beginBackgroundMCP(servers []MCPServerConnect) (uint64, context.
 	s.cancelBackgroundMCPLocked()
 	s.mcpClientsGen++
 	ctx, cancel := context.WithCancel(context.Background())
-	s.mcpConnect = MCPConnectUpdate{Servers: append([]MCPServerConnect(nil), servers...)}
+	s.mcpConnect = MCPConnectUpdate{Servers: append([]MCPServerConnect(nil), servers...), Generation: s.mcpClientsGen}
 	s.mcpConnectRecorded = true
 	s.mcpConnectDone = make(chan struct{})
 	s.mcpConnectCancel = cancel
@@ -1950,15 +1958,36 @@ func (s *State) beginBackgroundMCP(servers []MCPServerConnect) (uint64, context.
 }
 
 // settleBackgroundMCP records how one server of the dial of generation gen
-// ended. It reports whether the record was taken; a superseded dial is ignored.
-func (s *State) settleBackgroundMCP(gen uint64, i int, entry MCPServerConnect) bool {
+// ended: its entry in the progress record and, from its dial error, the
+// record of servers that did not answer in time (recordMCPDialLocked) - both
+// under one lock and only for the current dial, so a late result of a dial a
+// reload superseded touches neither. A server kept for one more try gets the
+// hint that says so. It reports whether the result was taken, and what the
+// no-answer record made of it.
+func (s *State) settleBackgroundMCP(gen uint64, i int, entry MCPServerConnect, dialErr error) (taken, retry, gaveUp bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if gen != s.mcpClientsGen || i < 0 || i >= len(s.mcpConnect.Servers) {
-		return false
+		return false, false, false
+	}
+	retry, gaveUp = s.recordMCPDialLocked(entry.Name, dialErr)
+	if retry {
+		entry.Hint = mcpRetryHint
 	}
 	s.mcpConnect.Servers[i] = entry
-	return true
+	return true, retry, gaveUp
+}
+
+// dropBackgroundMCPEntry marks a server of the dial of generation gen as
+// not installed after all: its switch went off or its approval was withdrawn
+// while it was being dialed.
+func (s *State) dropBackgroundMCPEntry(gen uint64, i int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if gen != s.mcpClientsGen || i < 0 || i >= len(s.mcpConnect.Servers) {
+		return
+	}
+	s.mcpConnect.Servers[i] = MCPServerConnect{Name: s.mcpConnect.Servers[i].Name, State: MCPConnectStateCancelled}
 }
 
 // finishBackgroundMCP installs the clients the dial of generation gen
@@ -2024,6 +2053,25 @@ func (s *State) cancelBackgroundMCPConnect() bool {
 	return s.cancelBackgroundMCPLocked()
 }
 
+// updateBackgroundMCPEntry keeps the record of a settled background connect
+// true to what a later dial of one server did - its one more try, its
+// switch, its approval - so a surface that adopts the session afterwards
+// does not show a stale failure or approval notice. A server the record
+// does not name, or a connect still running, is left alone.
+func (s *State) updateBackgroundMCPEntry(entry MCPServerConnect) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.mcpConnectRecorded || !s.mcpConnect.Done {
+		return
+	}
+	for i := range s.mcpConnect.Servers {
+		if s.mcpConnect.Servers[i].Name == entry.Name {
+			s.mcpConnect.Servers[i] = entry
+			return
+		}
+	}
+}
+
 // backgroundMCPRunning reports whether a background dial of the configured
 // servers has not settled yet.
 func (s *State) backgroundMCPRunning() bool {
@@ -2041,9 +2089,7 @@ func (s *State) MCPConnectSnapshot() (MCPConnectUpdate, bool) {
 	if !s.mcpConnectRecorded {
 		return MCPConnectUpdate{}, false
 	}
-	snap := s.mcpConnect.clone()
-	snap.Generation = s.mcpClientsGen
-	return snap, true
+	return s.mcpConnect.clone(), true
 }
 
 // WaitMCPConnect blocks until the session's background MCP dial has settled,

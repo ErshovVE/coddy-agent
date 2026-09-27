@@ -16,6 +16,7 @@ Needs pexpect and pyte (examples/cli/requirements.txt), go and npx on PATH,
 and a cli-tagged binary (CODDY_BIN, default build/coddy).
 """
 
+import itertools
 import json
 import os
 import queue
@@ -142,6 +143,7 @@ class StreamableHTTP(BaseHTTPRequestHandler):
 
 sse_sessions = {}
 sse_lock = threading.Lock()
+sse_ids = itertools.count(1)
 
 
 class LegacySSE(BaseHTTPRequestHandler):
@@ -154,7 +156,7 @@ class LegacySSE(BaseHTTPRequestHandler):
     def do_GET(self):
         out = queue.Queue()
         with sse_lock:
-            session = str(len(sse_sessions) + 1)
+            session = str(next(sse_ids))
             sse_sessions[session] = out
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -167,11 +169,18 @@ class LegacySSE(BaseHTTPRequestHandler):
                 try:
                     data = out.get(timeout=1)
                 except queue.Empty:
+                    # A comment line keeps the stream alive and finds out
+                    # when the client has gone, so the handler ends with it.
+                    self.wfile.write(b": ping\n\n")
+                    self.wfile.flush()
                     continue
                 self.wfile.write(b"event: message\ndata: " + data + b"\n\n")
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             pass
+        finally:
+            with sse_lock:
+                sse_sessions.pop(session, None)
 
     def do_POST(self):
         session = self.path.split("session=", 1)[-1]

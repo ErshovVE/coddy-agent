@@ -115,7 +115,7 @@ func TestFooterSegmentSurvivesANarrowWidth(t *testing.T) {
 // terminal's width, so the needles are fragments short enough to stay whole.
 func TestFailedAndHeldServersAreSaidOnce(t *testing.T) {
 	a := newTestApp(t)
-	failed := session.MCPServerConnect{Name: "docker", State: session.MCPConnectStateFailed, Error: "exit status 127", Hint: "npx -y mcp-server-docker has no version"}
+	failed := session.MCPServerConnect{Name: "docker", State: session.MCPConnectStateFailed, Error: "no answer to initialize within 20s", Hint: "The next prompt tries it once more"}
 	held := session.MCPServerConnect{Name: "project", State: session.MCPConnectStateHeld, Hint: "approve it with: coddy mcp trust project"}
 	a.applyMCPConnect(mcpUpdate(false, failed, held))
 	a.applyMCPConnect(mcpUpdate(true, failed, held))
@@ -123,7 +123,7 @@ func TestFailedAndHeldServersAreSaidOnce(t *testing.T) {
 	if n := strings.Count(text, "did not connect"); n != 1 {
 		t.Fatalf("failure row shown %d times:\n%s", n, text)
 	}
-	for _, fragment := range []string{"MCP server docker", "exit status 127", "has no version"} {
+	for _, fragment := range []string{"MCP server docker", "no answer to", "tries it once more"} {
 		if !strings.Contains(text, fragment) {
 			t.Fatalf("failure row lacks %q:\n%s", fragment, text)
 		}

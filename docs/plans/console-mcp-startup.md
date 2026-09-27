@@ -253,3 +253,46 @@ program, streamable HTTP and SSE. The last acceptance criterion of #319,
 (first frame 117 ms in the pty, the source never contacted), and
 `docs/features/skills.md` (*When skills are read*) states what a start
 reads.
+
+## 8. Cross-review of the rework
+
+Five reviewers read the rework: Cursor (auto), Devin (SWE-2), and Coddy on
+`codex/gpt-5.6-sol`, `neuraldeep/qwen3.8-27b` and `neuraldeep/gpt-oss-120b`.
+Confirmed and changed, each with a test where one could hold it:
+
+- The turn's own MCP work - the wait, the one more try, the parked and the
+  deferred dials - runs on the turn's context: Stop ends any of it at once,
+  and what it cut short stays parked for the next turn instead of counting
+  as a server that did not answer.
+- A result is classified when its dial returns (`mcpDialResult.CutShort`):
+  a server that failed on its own is not parked because another one ran the
+  caller's time out afterwards.
+- A dial that failed closes whatever it half opened, and a single-server
+  dial under an ended context starts nothing.
+- The record of the background connect carries its own generation, is kept
+  true by a later dial of one of its servers (the one more try, a switch, an
+  approval) and is cleared by a reload, so a resumed session shows no stale
+  failure or approval notice.
+- The record of servers that did not answer is kept under the same lock and
+  generation check as the connect's progress, so a late result of a dial a
+  reload superseded touches neither; `RefreshMCPServer` clears a server's
+  record only once a background connect still running has settled.
+- The surface hears about the connect from a goroutine of its own: a surface
+  slow to take an update cannot keep the connect from settling, which a
+  waiting turn depends on.
+- A server switched off, or no longer approved, while the background connect
+  dialed it is not installed when it answers.
+- The footer keeps the MCP count, the running tasks and the permission mode
+  whole together on a narrow line; a trust-gate error that is not a missing
+  approval is a warning like the others; the npx scenario skips on a checkout
+  without Node instead of failing.
+
+Checked and left as they are: servers an ACP client sends keep the 20 s bound
+without a second try (documented; only that client can declare them again);
+a reload that supersedes the console's background connect clears the footer
+and shows no progress of its own dial; `ReloadConfigForSession` runs only
+inside a turn of its session (`config_commit`), so no admission of that
+session can be waiting beside it; cancelling a context under the state's
+lock never calls back into the state, since `context.AfterFunc` runs its
+function on a goroutine of its own; the console loads a stored session only
+to continue it (a `@session:` mention reads the store and loads nothing).

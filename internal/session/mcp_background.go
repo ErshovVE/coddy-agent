@@ -79,6 +79,10 @@ func (u MCPConnectUpdate) clone() MCPConnectUpdate {
 	return out
 }
 
+// mcpRetryHint is what a failed server's row says when the server is tried
+// once more (noteConfiguredDial).
+const mcpRetryHint = "The next prompt tries it once more"
+
 // controlUpdateSender is the optional in-process surface boundary a background
 // connect reports through. The console implements it; the ACP server and the
 // HTTP relay do not, and they never connect in the background either.
@@ -125,6 +129,10 @@ func (m *Manager) connectNewSessionMCPServers(ctx context.Context, state *State)
 // held to the per-server timeout; one that did not answer within it is tried
 // once more at the session's next turn (noteConfiguredDial), and one that
 // failed otherwise is reported once and not dialed again.
+//
+// The surface hears about it from a goroutine of its own, never from inside
+// the dial: a surface slow to take an update must not keep the dial from
+// settling, since a turn waits for that (WaitMCPConnect).
 func (m *Manager) startBackgroundMCPConnect(state *State) {
 	cwd := state.GetCWD()
 	targets, held := m.configuredTargets(m.activeCfg(), cwd)
@@ -138,6 +146,8 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 		if h.Blocked != nil {
 			entry.Error = h.Blocked.Error()
 			entry.Hint = "approve it with: coddy mcp trust " + h.Server.Config.Name
+		} else if h.Err != nil {
+			entry.Error = h.Err.Error()
 		}
 		servers = append(servers, entry)
 	}
@@ -151,37 +161,68 @@ func (m *Manager) startBackgroundMCPConnect(state *State) {
 		return
 	}
 	m.sendMCPConnectUpdate(state)
+	// One update in flight at a time, the newest state read when it is sent:
+	// a signal that finds one pending is dropped, and the pending one reads
+	// what is current by then.
+	notify := make(chan struct{}, 1)
 	go func() {
+		for range notify {
+			m.sendMCPConnectUpdate(state)
+		}
+	}()
+	signal := func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	}
+	go func() {
+		defer close(notify)
 		results := m.dialConcurrently(ctx, targets, func(i int, r mcpDialResult) {
-			name := r.Target.Server.Config.Name
-			entry := MCPServerConnect{Name: name, State: MCPConnectStateConnected}
+			if r.CutShort {
+				// Superseded: the reload or the teardown that cancelled the
+				// dial is what the session runs now.
+				return
+			}
+			entry := MCPServerConnect{Name: r.Target.Server.Config.Name, State: MCPConnectStateConnected}
 			if r.Err != nil {
-				if ctx.Err() != nil {
-					// Superseded: the reload or the teardown that cancelled
-					// the dial is what the session runs now.
-					return
-				}
 				entry.State, entry.Error = MCPConnectStateFailed, r.Err.Error()
 			} else {
 				entry.Tools = len(r.Client.Tools())
 			}
-			m.logDial(r)
-			if m.noteConfiguredDial(state, name, r.Err) {
-				entry.Hint = "The next prompt tries it once more"
-			}
 			// The targets come first in servers, in the same order.
-			if state.settleBackgroundMCP(gen, i, entry) {
-				m.sendMCPConnectUpdate(state)
+			taken, retry, gaveUp := state.settleBackgroundMCP(gen, i, entry, r.Err)
+			if !taken {
+				return
 			}
+			m.logDial(r)
+			m.logNoAnswer(state, entry.Name, retry, gaveUp)
+			signal()
 		})
+		// A switch or a trust change that landed while the servers were
+		// dialing is applied now: a server no longer enabled, or no longer
+		// admitted for the workspace, is not installed.
+		admitted := make(map[string]bool, len(targets))
+		now, _ := m.configuredTargets(m.activeCfg(), state.GetCWD())
+		for _, t := range now {
+			admitted[t.Server.Config.Name] = true
+		}
 		clients := make([]*mcp.Client, 0, len(results))
-		for _, r := range results {
-			if r.Err == nil && r.Client != nil {
-				clients = append(clients, r.Client)
+		for i, r := range results {
+			if r.Err != nil || r.Client == nil {
+				continue
 			}
+			if !admitted[r.Target.Server.Config.Name] {
+				_ = r.Client.Close()
+				state.dropBackgroundMCPEntry(gen, i)
+				m.log.Info("MCP server not installed: switched off or no longer approved while it was connecting",
+					"server", r.Target.Server.Config.Name, "session", state.GetID())
+				continue
+			}
+			clients = append(clients, r.Client)
 		}
 		if state.finishBackgroundMCP(gen, clients) {
-			m.sendMCPConnectUpdate(state)
+			signal()
 		}
 	}()
 }

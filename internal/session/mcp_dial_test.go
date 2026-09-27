@@ -10,6 +10,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/EvilFreelancer/coddy-agent/internal/acp"
 	"github.com/EvilFreelancer/coddy-agent/internal/config"
+	"github.com/EvilFreelancer/coddy-agent/internal/mcp"
 )
 
 // mcpTestSender is the update sender of the MCP tests: it drops updates and
@@ -351,5 +353,90 @@ func TestBackgroundNoAnswerIsTriedOnceMoreAtTheFirstPrompt(t *testing.T) {
 	f.releaseServer()
 	if names := promptNames(t, f.mgr, f.st.GetID(), entered); len(names) != 1 || names[0] != "gated" {
 		t.Fatalf("the first prompt found %v, want [gated]", names)
+	}
+}
+
+// TestStopDuringTheOneMoreTryEndsTheTurnAtOnce: the dial a turn's start makes
+// for a server's one more try runs on the turn's context, so Stop ends it at
+// once: the runner is entered with the cancelled context, and the server,
+// cut short rather than failed, is parked for the next turn.
+func TestStopDuringTheOneMoreTryEndsTheTurnAtOnce(t *testing.T) {
+	dir := t.TempDir()
+	started := filepath.Join(dir, "started")
+	entered := make(chan error, 2)
+	runner := func(ctx context.Context, _ *State, _ []acp.ContentBlock, _ acp.UpdateSender) (string, error) {
+		entered <- ctx.Err()
+		return string(acp.StopReasonCancelled), nil
+	}
+	mgr := NewManager(reloadTestConfig(gatedMCPServer("hung", started, filepath.Join(dir, "never"))), mcpTestSender{}, runner, slog.Default(), t.TempDir(), nil)
+	mgr.SetMCPConnectTimeoutForTest(2 * time.Second)
+	res, err := mgr.HandleSessionNew(context.Background(), acp.SessionNewParams{CWD: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := mgr.SessionByID(res.SessionID)
+	t.Cleanup(st.CloseAll)
+	go func() {
+		_, _ = mgr.HandleSessionPrompt(context.Background(), acp.SessionPromptParams{
+			SessionID: res.SessionID, Prompt: []acp.ContentBlock{{Type: "text", Text: "go"}},
+		})
+	}()
+	if !waitUntil(t, 5*time.Second, func() bool { return spawns(started) == 2 }) {
+		t.Fatalf("the one more try never started (spawns %d)", spawns(started))
+	}
+	stopped := time.Now()
+	mgr.HandleSessionCancel(acp.SessionCancelParams{SessionID: res.SessionID})
+	select {
+	case err := <-entered:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("the runner was entered with %v, want context.Canceled", err)
+		}
+		if took := time.Since(stopped); took > time.Second {
+			t.Fatalf("the stopped turn reached its runner %s after Stop, want at once", took)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stopped turn never reached its runner")
+	}
+	if !waitUntil(t, 2*time.Second, st.hasPendingMCPServers) {
+		t.Fatal("the server the Stop cut short was not parked for the next turn")
+	}
+}
+
+// TestAFailureIsNotCutShortByALaterDeadline: in one start, a server that
+// fails at once is not parked for the next turn because another one then ran
+// the shared deadline out; only the one cut short is.
+func TestAFailureIsNotCutShortByALaterDeadline(t *testing.T) {
+	prev := mcpStartTimeout
+	mcpStartTimeout = 400 * time.Millisecond
+	t.Cleanup(func() { mcpStartTimeout = prev })
+	dir := t.TempDir()
+	hung := gatedMCPServer("hung", filepath.Join(dir, "started"), filepath.Join(dir, "never"))
+	broken := config.MCPServerConfig{Type: "stdio", Name: "broken", Command: filepath.Join(dir, "missing-binary")}
+	mgr := NewManager(reloadTestConfig(broken, hung), mcpTestSender{}, nil, slog.Default(), t.TempDir(), nil)
+	mgr.SetMCPConnectTimeoutForTest(10 * time.Second)
+	res, err := mgr.HandleSessionNew(context.Background(), acp.SessionNewParams{CWD: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := mgr.SessionByID(res.SessionID)
+	t.Cleanup(st.CloseAll)
+	if got := st.takeMCPServersPending(); len(got) != 1 || got[0] != "hung" {
+		t.Fatalf("parked = %v, want only the server the deadline cut short", got)
+	}
+}
+
+// TestExpiredBudgetDialsNothing: a single-server dial under a context that
+// has already ended does not call the server at all.
+func TestExpiredBudgetDialsNothing(t *testing.T) {
+	mgr := NewManager(reloadTestConfig(), mcpTestSender{}, nil, slog.Default(), t.TempDir(), nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	_, err := mgr.dialOne(ctx, mcpDialTarget{Connect: func(context.Context) (*mcp.Client, error) {
+		called = true
+		return nil, nil
+	}})
+	if !errors.Is(err, context.Canceled) || called {
+		t.Fatalf("dialOne under an ended context = %v, called %v; want context.Canceled and no call", err, called)
 	}
 }
